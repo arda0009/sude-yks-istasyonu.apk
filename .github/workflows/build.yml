@@ -20,7 +20,7 @@ jobs:
           channel: 'stable'
 
       - name: Kütüphaneleri Yükle
-        run: pip install -r requirements.txt
+        run: pip install flet && pip install -r requirements.txt
 
       - name: APK Dosyasını Derle
         run: flet build apk
