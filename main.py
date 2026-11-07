@@ -2029,4 +2029,4 @@ def main(page: ft.Page):
         giris_ac()
 
 
-ft.app(target=main)
+ft.run(main)
