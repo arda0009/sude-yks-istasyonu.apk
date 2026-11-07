@@ -1,0 +1,32 @@
+name: Sude Istasyonu APK Derle
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kodları Al
+        uses: actions/checkout@v4
+
+      - name: Python Kurulumu
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Flutter Altyapısını Kur
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Kütüphaneleri Yükle
+        run: pip install -r requirements.txt
+
+      - name: APK Dosyasını Derle
+        run: flet build apk
+
+      - name: APK'yı İndirilebilir Hale Getir
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sude_Istasyonu_APK
+          path: build/apk/**/*.apk
