@@ -7,6 +7,8 @@ import copy
 import json
 import os
 import hashlib
+import re
+import asyncio
 from datetime import datetime, date, timedelta
 
 # Firebase Realtime Database adresin (Console > Realtime Database sayfasının en üstünde yazar).
@@ -16,6 +18,119 @@ try:
     import requests
 except ImportError:  # requests yoksa uygulama yine açılır, sadece Asistan çalışmaz
     requests = None
+
+
+# ==========================================
+# SÜRÜM UYUMLULUK KATMANI
+# (Flet'in eski ve yeni sürümlerinde aynı kod çalışsın diye)
+# ==========================================
+IKON_ALT = {
+    "NIGHTLIGHT_ROUND": ("NIGHTLIGHT", "BEDTIME", "DARK_MODE"),
+    "BEDTIME": ("NIGHTLIGHT", "DARK_MODE"),
+    "ROCKET_LAUNCH_ROUNDED": ("ROCKET_LAUNCH", "ROCKET"),
+    "SHOW_CHART_OUTLINED": ("SHOW_CHART", "INSERT_CHART_OUTLINED", "INSERT_CHART"),
+    "GRID_VIEW_OUTLINED": ("GRID_VIEW", "APPS"),
+    "TIMER_OUTLINED": ("TIMER", "ACCESS_TIME"),
+    "HOME_OUTLINED": ("HOME",),
+    "CALENDAR_MONTH_OUTLINED": ("CALENDAR_MONTH", "CALENDAR_TODAY", "EVENT"),
+    "CALENDAR_MONTH": ("CALENDAR_TODAY", "EVENT"),
+    "EMOJI_EMOTIONS": ("SENTIMENT_SATISFIED", "MOOD"),
+    "SMART_TOY": ("ANDROID", "CHAT"),
+    "SPORTS_ESPORTS": ("GAMEPAD", "VIDEOGAME_ASSET"),
+    "ADMIN_PANEL_SETTINGS": ("SETTINGS", "SECURITY"),
+    "CLEANING_SERVICES": ("DELETE_SWEEP", "DELETE"),
+    "TRACK_CHANGES": ("GPS_FIXED", "TARGET"),
+    "HOURGLASS_BOTTOM": ("HOURGLASS_EMPTY", "TIMER"),
+    "REMOVE_CIRCLE_OUTLINE": ("REMOVE_CIRCLE", "REMOVE"),
+    "ADD_CIRCLE": ("ADD", "ADD_CIRCLE_OUTLINE"),
+    "STOP_CIRCLE": ("STOP",),
+    "CIRCLE_OUTLINED": ("RADIO_BUTTON_UNCHECKED", "CIRCLE"),
+    "LOCK_OUTLINE": ("LOCK",),
+    "EVENT_AVAILABLE": ("EVENT", "CALENDAR_TODAY"),
+    "EVENT_NOTE": ("EVENT", "NOTE"),
+    "EDIT_NOTE": ("EDIT", "NOTE_ADD"),
+    "WB_SUNNY": ("SUNNY", "LIGHT_MODE"),
+    "GRID_3X3": ("GRID_ON", "GRID_VIEW"),
+    "ARROW_BACK_IOS_NEW": ("ARROW_BACK_IOS", "ARROW_BACK"),
+    "CARD_GIFTCARD": ("REDEEM", "CARD_GIFTCARD_OUTLINED"),
+    "NOTIFICATIONS_ACTIVE": ("NOTIFICATIONS",),
+    "WATER_DROP": ("WATER", "OPACITY"),
+}
+
+
+def ik(ad):
+    """Ikon adini hangi Flet surumu olursa olsun bulur, bulamazsa benzerini/yedegini verir."""
+    adaylar = (ad,) + IKON_ALT.get(ad, ()) + ("CIRCLE", "STAR")
+    for kaynak_adi in ("Icons", "icons"):
+        kaynak = getattr(ft, kaynak_adi, None)
+        if kaynak is None:
+            continue
+        for a in adaylar:
+            try:
+                d = getattr(kaynak, a)
+                if d is not None:
+                    return d
+            except Exception:
+                pass
+    return None
+
+
+def opak(oran, renk_hex):
+    """#AARRGGBB uretir (Flet surum farkindan bagimsiz)."""
+    h = renk_hex.lstrip("#")
+    if len(h) == 8:
+        h = h[2:]
+    return "#{:02X}{}".format(int(max(0.0, min(1.0, oran)) * 255), h)
+
+
+KIRMIZI = "#EF5350"
+SEFFAF = "#00000000"
+ORTA = ft.Alignment(0, 0)
+UST_SOL = ft.Alignment(-1, -1)
+ALT_SAG = ft.Alignment(1, 1)
+
+
+def kenar(genislik, renk_):
+    k = ft.BorderSide(genislik, renk_)
+    return ft.Border(top=k, right=k, bottom=k, left=k)
+
+
+def pad_only(left=0, top=0, right=0, bottom=0):
+    return ft.Padding(left=left, top=top, right=right, bottom=bottom)
+
+
+def pad_sim(horizontal=0, vertical=0):
+    return ft.Padding(left=horizontal, top=vertical, right=horizontal, bottom=vertical)
+
+
+DUGME = getattr(ft, "ElevatedButton", None) or getattr(ft, "Button")
+
+
+def dugme_olustur(metin, **kw):
+    try:
+        return DUGME(text=metin, **kw)
+    except TypeError:
+        return DUGME(content=metin, **kw)
+
+
+def metin_dugmesi(metin, **kw):
+    try:
+        return ft.TextButton(text=metin, **kw)
+    except TypeError:
+        return ft.TextButton(content=metin, **kw)
+
+
+def dd_secenek(metin):
+    s_ = getattr(ft, "DropdownOption", None)
+    return s_(metin) if s_ else ft.dropdown.Option(metin)
+
+
+def dd_olustur(secenekler, deger, degisti, **kw):
+    try:
+        return ft.Dropdown(options=[dd_secenek(x) for x in secenekler], value=deger, on_select=degisti, **kw)
+    except TypeError:
+        return ft.Dropdown(options=[dd_secenek(x) for x in secenekler], value=deger, on_change=degisti, **kw)
+
 
 # ==========================================
 # 0. AYARLAR (BURAYI KENDİNE GÖRE DÜZENLE)
@@ -152,6 +267,7 @@ VARSAYILAN_VERI = {
     "calisma_log": {},     # eski sürümden kalan {"gg.aa.yyyy": dakika}
     "gun": {"tarih": "", "baslama": ""},   # günün ilk kronometre başlangıcı
     "sinyal": {"aktif": False, "mesaj": ""},
+    "bildirim": {"aktif": True, "konu": "", "baslama": 11, "su": True, "ders": True, "gunsonu": True, "sabah": True},
 }
 
 
@@ -199,12 +315,23 @@ def sifre_ozeti(sifre, tuz):
 
 
 def depo_dosyasi():
-    klasor = os.environ.get("FLET_APP_STORAGE_DATA") or os.path.dirname(os.path.abspath(__file__))
-    try:
-        os.makedirs(klasor, exist_ok=True)
-    except Exception:
-        pass
-    return os.path.join(klasor, "yks_asistan_veri.json")
+    """Yazilabilen ilk klasoru secer (mobilde uygulama klasoru salt-okunur olabilir)."""
+    import tempfile
+    adaylar = [os.environ.get("FLET_APP_STORAGE_DATA"), os.environ.get("FLET_APP_STORAGE_TEMP"),
+               os.path.expanduser("~"), os.path.dirname(os.path.abspath(__file__)), tempfile.gettempdir()]
+    for klasor in adaylar:
+        if not klasor:
+            continue
+        try:
+            os.makedirs(klasor, exist_ok=True)
+            sinama = os.path.join(klasor, ".yazma_testi")
+            with open(sinama, "w") as f:
+                f.write("1")
+            os.remove(sinama)
+            return os.path.join(klasor, "yks_asistan_veri.json")
+        except Exception:
+            continue
+    return "yks_asistan_veri.json"
 
 
 # ==========================================
@@ -254,9 +381,12 @@ def db_hazirla(ham):
         db["plan"] = copy.deepcopy(HAFTALIK_PLAN)
     for g in GUNLER:
         db["plan"][g] = listeye(db["plan"].get(g))
-    for k in ("su", "gun", "sinyal", "calisma_sn", "calisma_log"):
+    for k in ("su", "gun", "sinyal", "bildirim", "calisma_sn", "calisma_log"):
         if not isinstance(db[k], dict):
             db[k] = copy.deepcopy(VARSAYILAN_VERI[k])
+    b_ = copy.deepcopy(VARSAYILAN_VERI["bildirim"])
+    b_.update(db["bildirim"])
+    db["bildirim"] = b_
     if db["tema"] not in TEMA_RENKLERI:
         db["tema"] = VARSAYILAN_TEMA
     return db
@@ -270,6 +400,39 @@ def bulut_oku(kullanici=None):
     r = requests.get(yol, timeout=10)
     r.raise_for_status()
     return r.json()
+
+
+NTFY_SUNUCU = "https://ntfy.sh"   # bildirimleri telefona ulaştıran ücretsiz servis (ntfy uygulaması)
+
+
+def bulut_get(yol):
+    if requests is None:
+        raise RuntimeError("'requests' paketi yüklü değil")
+    r = requests.get(f"{FIREBASE_URL}/{yol}.json", timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
+def bulut_patch(yol, veri):
+    if requests is None:
+        raise RuntimeError("'requests' paketi yüklü değil")
+    r = requests.patch(f"{FIREBASE_URL}/{yol}.json", json=veri, timeout=10)
+    r.raise_for_status()
+
+
+def ntfy_gonder(konu, baslik, mesaj, oncelik=3):
+    """Telefona gerçek (uygulama kapalıyken de gelen) bildirim yollar. (başarılı_mı, hata) döndürür."""
+    if requests is None:
+        return False, "'requests' paketi yüklü değil"
+    if not konu:
+        return False, "bildirim konusu yok"
+    try:
+        r = requests.post(NTFY_SUNUCU, json={"topic": konu, "title": baslik, "message": mesaj, "priority": oncelik},
+                          timeout=10)
+        r.raise_for_status()
+        return True, ""
+    except Exception as ex:
+        return False, str(ex)
 
 
 def bulut_guncelle(kullanici, veri):
@@ -321,8 +484,11 @@ def main(page: ft.Page):
     page.title = "YKS Asistanım 🚀"
     page.padding = 0
     page.spacing = 0
-    page.window.width = 400
-    page.window.height = 820
+    try:
+        page.window.width = 400
+        page.window.height = 820
+    except Exception:
+        pass
 
     # ==========================================
     # 3. KALICI VERİ
@@ -330,9 +496,13 @@ def main(page: ft.Page):
     # ==========================================
     DOSYA = depo_dosyasi()
     kilit = threading.RLock()
-    oturum = {"kullanici": "", "senkron": True}   # kim giriş yapmış, buluta yazılmamış değişiklik var mı
-    bulut = {"bekleyen": set(), "olay": threading.Event()}
+    # kirli: {anahtar: sürüm} -> buluta henüz gitmemiş değişiklikler (dosyaya da yazılır, uygulama kapansa kaybolmaz)
+    oturum = {"kullanici": "", "kirli": {}, "surum": 0}
+    bulut_olay = threading.Event()
     DB = {}   # DİKKAT: hiçbir yerde yeniden atanmaz, DB.clear()/DB.update() ile yerinde değişir
+
+    def arka_plan(fn, *args):
+        threading.Thread(target=fn, args=args, daemon=True).start()
 
     def yerel_yaz():
         """Telefondaki yedeği yazar (internet yokken de veri kaybolmasın)."""
@@ -340,7 +510,7 @@ def main(page: ft.Page):
             try:
                 gecici = DOSYA + ".tmp"
                 with open(gecici, "w", encoding="utf-8") as f:
-                    json.dump({"kullanici": oturum["kullanici"], "senkron": oturum["senkron"], "db": DB},
+                    json.dump({"kullanici": oturum["kullanici"], "kirli": oturum["kirli"], "db": DB},
                               f, ensure_ascii=False)
                 os.replace(gecici, DOSYA)
             except Exception as ex:
@@ -351,68 +521,96 @@ def main(page: ft.Page):
             with open(DOSYA, "r", encoding="utf-8") as f:
                 veri = json.load(f)
         except Exception:
-            return "", True, {}
+            return "", {}, {}
         if not isinstance(veri, dict):
-            return "", True, {}
+            return "", {}, {}
         if "db" not in veri:                      # eski sürümün düz dosya biçimi
-            return "", True, veri
-        return str(veri.get("kullanici") or ""), bool(veri.get("senkron", True)), veri.get("db") or {}
+            return "", {}, veri
+        if isinstance(veri.get("kirli"), dict):
+            kirli = {str(k): int(v) for k, v in veri["kirli"].items()}
+        elif veri.get("senkron") is False:        # bir önceki sürümün biçimi
+            kirli = {k: 1 for k in BULUT_ANAHTARLARI}
+        else:
+            kirli = {}
+        return str(veri.get("kullanici") or ""), kirli, veri.get("db") or {}
 
-    _k, _s, _ham = yerelden_yukle()
+    _k, _kirli, _ham = yerelden_yukle()
     DB.update(db_hazirla(_ham))
-    oturum["kullanici"], oturum["senkron"] = _k, _s
+    oturum["kullanici"], oturum["kirli"] = _k, _kirli
+    oturum["surum"] = max(_kirli.values(), default=0)
 
     def bulut_gonder():
-        """Bekleyen değişiklikleri Firebase'e yollar. Başarılıysa True döner."""
+        """Buluta gitmemiş değişiklikleri Firebase'e yollar. Başarılıysa True döner."""
         with kilit:
             kul = oturum["kullanici"]
-            anahtarlar = set(bulut["bekleyen"])
-            bulut["bekleyen"].clear()
-            veri = {a: bulut_hazirla(a, copy.deepcopy(DB.get(a))) for a in anahtarlar}
-        if not kul or not anahtarlar:
+            foto = dict(oturum["kirli"])
+            veri = {a: bulut_hazirla(a, copy.deepcopy(DB.get(a))) for a in foto}
+        if not kul or not foto:
             return True
         try:
             bulut_guncelle(kul, veri)
         except Exception as ex:
             print("Bulut kayıt hatası:", ex)
-            with kilit:
-                bulut["bekleyen"].update(anahtarlar)
             return False
         with kilit:
-            if not bulut["bekleyen"]:
-                oturum["senkron"] = True
-                yerel_yaz()
+            for a, v in foto.items():
+                if oturum["kirli"].get(a) == v:     # gönderirken yeniden değişmediyse temizle
+                    del oturum["kirli"][a]
+            yerel_yaz()
         return True
 
     def bulut_isci():
         """Tek bir arka plan işçisi: yazmalar sırayla gider, internet yoksa 5 sn'de bir tekrar dener."""
         while True:
-            bulut["olay"].wait()
-            bulut["olay"].clear()
+            bulut_olay.wait()
+            bulut_olay.clear()
             while not bulut_gonder():
                 time.sleep(5)
 
-    threading.Thread(target=bulut_isci, daemon=True).start()
+    arka_plan(bulut_isci)
 
     def kaydet(anahtar=None):
         """Önce telefona, sonra arka planda Firebase'e kaydeder."""
         with kilit:
             if oturum["kullanici"]:
-                oturum["senkron"] = False
-                bulut["bekleyen"].update([anahtar] if anahtar else BULUT_ANAHTARLARI)
+                oturum["surum"] += 1
+                for a in ([anahtar] if anahtar else BULUT_ANAHTARLARI):
+                    oturum["kirli"][a] = oturum["surum"]
             yerel_yaz()
         if oturum["kullanici"]:
-            bulut["olay"].set()
+            bulut_olay.set()
+
+    def bildirim_konu_hazirla():
+        """Her öğrenciye tahmin edilemez, kendine özel bir bildirim konusu verir."""
+        if not oturum["kullanici"]:
+            return
+        b = DB["bildirim"]
+        if not b.get("konu"):
+            ad = re.sub(r"[^a-z0-9]", "", oturum["kullanici"].translate(str.maketrans("çğıöşü", "cgiosu"))) or "ogrenci"
+            b["konu"] = f"yks-{ad}-{os.urandom(4).hex()}"
+            kaydet("bildirim")
+
+    def yonetici_haber(baslik, mesaj):
+        """Öğrenci gün sonu/deneme ekleyince yöneticinin (Arda) telefonuna anında bildirim yollar."""
+        def is_():
+            try:
+                y = bulut_get("yonetici") or {}
+                if y.get("konu") and y.get("kullanici") != oturum["kullanici"]:
+                    ntfy_gonder(y["konu"], baslik, mesaj, 4)
+            except Exception as ex:
+                print("Yöneticiye haber verilemedi:", ex)
+        arka_plan(is_)
 
     ui = {
         "sekme": 0, "alt": None, "net_tab": 0, "net_sinav": "TYT", "ders": None,
         "surpriz": "", "panel_giris": False, "panel_tab": 0, "eglence_tab": 0, "panel_hata": "",
         "plan_gun": datetime.now().weekday(), "giris_mod": "giris" if oturum["kullanici"] else "kayit", "hata": "",
-        "gs_tarih": "", "gs_puan": 0, "gs_not": "",
+        "gs_tarih": "", "gs_puan": 0, "gs_not": "", "panel_ogrenci": None, "taslak": "",
     }
     oyun = {"xox": [""] * 9, "xox_kazanan": None}
     zm = {"mod": "krono", "durum": "bos", "birikmis": 0.0, "t0": None,
           "label": None, "ring": None, "thread": None, "bildirildi": False}
+    gk = {"metinler": None}   # ana sayfadaki canlı geri sayım yazıları
 
     # --- çalışma süresi yardımcıları ---
     def gun_sn(tarih):
@@ -435,7 +633,7 @@ def main(page: ft.Page):
         Onları genişlik doldurmaya (STRETCH) çevirir. Row içindekilere dokunmaz."""
         if isinstance(c, ft.Column):
             for k in c.controls:
-                if isinstance(k, ft.ElevatedButton) and k.expand:
+                if isinstance(k, DUGME) and k.expand:
                     k.expand = False
                     c.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
         for k in (getattr(c, "controls", None) or []):
@@ -451,9 +649,31 @@ def main(page: ft.Page):
 
     def snack(mesaj):
         try:
-            page.open(ft.SnackBar(ft.Text(mesaj)))
+            bar = ft.SnackBar(ft.Text(mesaj))
+            if hasattr(page, "show_dialog"):
+                page.show_dialog(bar)
+            else:
+                page.open(bar)
+        except Exception as ex:
+            print("Snack gosterilemedi:", ex)
+
+    def url_ac(url):
+        """Baglantiyi tarayicida/uygulamada acar (Flet surumunden bagimsiz)."""
+        try:
+            sonuc = page.launch_url(url)
+            if asyncio.iscoroutine(sonuc):
+                async def _bekle():
+                    await sonuc
+                page.run_task(_bekle)
+            return
         except Exception:
             pass
+        try:
+            async def _ac():
+                await ft.UrlLauncher().launch_url(url)
+            page.run_task(_ac)
+        except Exception as ex:
+            print("URL acilamadi:", ex)
 
     def kutlama():
         def isle():
@@ -465,7 +685,7 @@ def main(page: ft.Page):
                     kat.controls.append(ft.Container(
                         content=ft.Text(random.choice(["🎈", "🎉", "💖", "✨", "🌹"]), size=random.randint(24, 38)),
                         left=random.randint(0, max(10, w - 40)), top=h,
-                        animate_position=ft.animation.Animation(random.randint(1800, 3000), ft.AnimationCurve.EASE_OUT),
+                        animate_position=ft.Animation(random.randint(1800, 3000), ft.AnimationCurve.EASE_OUT),
                     ))
                 page.overlay.append(kat)
                 page.update()
@@ -483,14 +703,14 @@ def main(page: ft.Page):
     def kart(r, icerik, padding=18, border=None, **kw):
         return ft.Container(
             bgcolor=r["card_bg"], border_radius=22, padding=padding,
-            border=border or ft.border.all(1, r["border"]),
-            shadow=ft.BoxShadow(blur_radius=14, color=ft.colors.with_opacity(0.06, "#000000"), offset=ft.Offset(0, 4)),
+            border=border or kenar(1, r["border"]),
+            shadow=ft.BoxShadow(blur_radius=14, color=opak(0.06, "#000000"), offset=ft.Offset(0, 4)),
             content=icerik, **kw
         )
 
     def buton(r, metin, on_click, ikon=None, genis=False, ikincil=False, data=None, yukseklik=48):
-        return ft.ElevatedButton(
-            text=metin, icon=ikon, on_click=on_click, data=data, expand=genis, height=yukseklik,
+        return dugme_olustur(
+            metin, icon=ikon, on_click=on_click, data=data, expand=genis, height=yukseklik,
             bgcolor=r["card_bg"] if ikincil else r["hdr"],
             color=r["hdr"] if ikincil else okunur_renk(r["hdr"]),
             style=ft.ButtonStyle(
@@ -510,8 +730,8 @@ def main(page: ft.Page):
     def bolum_basligi(r, ikon, metin, sag=None):
         satir = [
             ft.Container(
-                width=34, height=34, border_radius=12, alignment=ft.alignment.center,
-                bgcolor=ft.colors.with_opacity(0.14, r["hdr"]),
+                width=34, height=34, border_radius=12, alignment=ORTA,
+                bgcolor=opak(0.14, r["hdr"]),
                 content=ft.Icon(ikon, color=r["hdr"], size=19),
             ),
             ft.Text(metin, size=16, color=r["txt"], weight=ft.FontWeight.W_700, expand=True),
@@ -527,18 +747,18 @@ def main(page: ft.Page):
         ], spacing=2, expand=True)
         satir = []
         if geri:
-            satir.append(ft.IconButton(ft.icons.ARROW_BACK_IOS_NEW, icon_color=r["hdr"], icon_size=20, on_click=geri))
+            satir.append(ft.IconButton(icon=ik("ARROW_BACK_IOS_NEW"), icon_color=r["hdr"], icon_size=20, on_click=geri))
         satir.append(baslik_kolon)
         return ft.Row(satir, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
     def gorev_satiri(r, metin, bitti, data, on_change):
-        bg_renk = ft.colors.with_opacity(0.10, r["accent"]) if bitti else r["bg"]
+        bg_renk = opak(0.10, r["accent"]) if bitti else r["bg"]
         txt_renk = r["muted"] if bitti else r["txt"]
         decor = ft.TextDecoration.LINE_THROUGH if bitti else ft.TextDecoration.NONE
         return ft.Container(
-            padding=ft.padding.only(left=4, right=12, top=2, bottom=2),
+            padding=pad_only(left=4, right=12, top=2, bottom=2),
             border_radius=16, bgcolor=bg_renk,
-            border=ft.border.all(1, ft.colors.with_opacity(0.5, r["border"])),
+            border=kenar(1, opak(0.5, r["border"])),
             content=ft.Row([
                 ft.Checkbox(value=bitti, data=data, on_change=on_change, fill_color=r["accent"], check_color=r["card_bg"]),
                 ft.Text(metin, color=txt_renk, weight=ft.FontWeight.W_600, size=14,
@@ -550,7 +770,7 @@ def main(page: ft.Page):
         return ft.Container(
             border_radius=10, clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
             content=ft.ProgressBar(value=max(0.0, min(oran, 1.0)), color=renk_ or r["hdr"],
-                                   bgcolor=ft.colors.with_opacity(0.2, r["muted"]), bar_height=12),
+                                   bgcolor=opak(0.2, r["muted"]), bar_height=12),
         )
 
     def segment(r, etiketler, secili, degisti):
@@ -563,21 +783,21 @@ def main(page: ft.Page):
         for i, etiket in enumerate(etiketler):
             aktif = i == secili
             ogeler.append(ft.Container(
-                expand=True, padding=ft.padding.symmetric(vertical=10), border_radius=12,
-                alignment=ft.alignment.center, ink=True, on_click=tik(i),
-                bgcolor=r["hdr"] if aktif else ft.colors.TRANSPARENT,
+                expand=True, padding=pad_sim(vertical=10), border_radius=12,
+                alignment=ORTA, ink=True, on_click=tik(i),
+                bgcolor=r["hdr"] if aktif else SEFFAF,
                 content=ft.Text(etiket, size=12, weight=ft.FontWeight.W_700, text_align=ft.TextAlign.CENTER,
                                 color=okunur_renk(r["hdr"]) if aktif else r["muted"]),
             ))
         return ft.Container(
-            bgcolor=r["card_bg"], border_radius=16, padding=4, border=ft.border.all(1, r["border"]),
+            bgcolor=r["card_bg"], border_radius=16, padding=4, border=kenar(1, r["border"]),
             content=ft.Row(ogeler, spacing=4),
         )
 
     def stat_kutusu(r, ikon, deger, etiket):
         return ft.Container(
-            expand=True, padding=ft.padding.only(left=14, right=10, top=14, bottom=14), border_radius=20,
-            bgcolor=r["card_bg"], border=ft.border.all(1, r["border"]),
+            expand=True, padding=pad_only(left=14, right=10, top=14, bottom=14), border_radius=20,
+            bgcolor=r["card_bg"], border=kenar(1, r["border"]),
             content=ft.Column([
                 ft.Icon(ikon, color=r["accent"], size=22),
                 ft.Text(deger, size=16, weight=ft.FontWeight.W_800, color=r["txt"]),
@@ -597,8 +817,8 @@ def main(page: ft.Page):
         def basari(ad, aciklama, acik, odul):
             return ft.Container(
                 padding=12, border_radius=16,
-                bgcolor=ft.colors.with_opacity(0.12, r["accent"]) if acik else r["bg"],
-                border=ft.border.all(2 if acik else 1, r["accent"] if acik else r["border"]),
+                bgcolor=opak(0.12, r["accent"]) if acik else r["bg"],
+                border=kenar(2 if acik else 1, r["accent"] if acik else r["border"]),
                 content=ft.Row([
                     ft.Text("🔓" if acik else "🔒", size=26),
                     ft.Column([
@@ -627,7 +847,7 @@ def main(page: ft.Page):
         for i, g in enumerate(DB["ozel_gorevler"]):
             if g["durum"] != "Tamamlandı":
                 ozel.append(ft.Container(
-                    padding=12, border_radius=16, bgcolor=r["bg"], border=ft.border.all(1, r["hdr"]),
+                    padding=12, border_radius=16, bgcolor=r["bg"], border=kenar(1, r["hdr"]),
                     content=ft.Column([
                         ft.Text(f"🎯 Arda'dan görev: {g['gorev']}", size=14, weight=ft.FontWeight.W_700, color=r["txt"]),
                         ft.Text(f"🎁 Ödül: {g['odul']}", size=12, color=r["accent"]),
@@ -652,7 +872,7 @@ def main(page: ft.Page):
         # --- Başlık ---
         isim = kullanici_adi() or "Şampiyon"
         avatar = ft.Container(
-            width=46, height=46, border_radius=23, alignment=ft.alignment.center, bgcolor=r["hdr"],
+            width=46, height=46, border_radius=23, alignment=ORTA, bgcolor=r["hdr"],
             content=ft.Text(isim[:1].upper(), size=20, weight=ft.FontWeight.BOLD, color=okunur_renk(r["hdr"])),
         )
         header = ft.Row([
@@ -667,10 +887,10 @@ def main(page: ft.Page):
         sinyal_banner = []
         if DB["sinyal"].get("aktif") and DB["sinyal"].get("mesaj"):
             sinyal_banner.append(ft.Container(
-                padding=14, border_radius=18, bgcolor=ft.colors.with_opacity(0.15, r["hdr"]),
-                border=ft.border.all(1, r["hdr"]),
+                padding=14, border_radius=18, bgcolor=opak(0.15, r["hdr"]),
+                border=kenar(1, r["hdr"]),
                 content=ft.Row([
-                    ft.Icon(ft.icons.NOTIFICATIONS_ACTIVE, color=r["hdr"]),
+                    ft.Icon(ik("NOTIFICATIONS_ACTIVE"), color=r["hdr"]),
                     ft.Column([
                         ft.Text("Arda'dan Sinyal 🚨", size=12, color=r["hdr"], weight=ft.FontWeight.BOLD),
                         ft.Text(DB["sinyal"]["mesaj"], color=r["txt"], weight=ft.FontWeight.W_600),
@@ -681,34 +901,39 @@ def main(page: ft.Page):
         # --- YKS geri sayım (hero kart) ---
         fark = YKS_TARIHI - simdi
         beyaz = "#FFFFFF"
-        beyaz_sonuk = ft.colors.with_opacity(0.78, beyaz)
+        beyaz_sonuk = opak(0.78, beyaz)
+
+        metinler = []
 
         def zaman_kutu(deger, etiket):
+            t = ft.Text(str(deger), size=22, weight=ft.FontWeight.W_800, color=beyaz)
+            metinler.append(t)
             return ft.Container(
-                expand=True, padding=ft.padding.symmetric(vertical=10), border_radius=16,
-                bgcolor=ft.colors.with_opacity(0.18, beyaz), alignment=ft.alignment.center,
-                content=ft.Column([
-                    ft.Text(str(deger), size=26, weight=ft.FontWeight.W_800, color=beyaz),
-                    ft.Text(etiket, size=11, color=beyaz_sonuk),
-                ], spacing=0, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                expand=True, padding=pad_sim(vertical=10), border_radius=16,
+                bgcolor=opak(0.18, beyaz), alignment=ORTA,
+                content=ft.Column([t, ft.Text(etiket, size=11, color=beyaz_sonuk)],
+                                  spacing=0, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             )
 
-        if fark.total_seconds() > 0:
+        kalan_sn = int(fark.total_seconds())
+        if kalan_sn > 0:
             kutular = ft.Row([
-                zaman_kutu(fark.days, "Gün"), zaman_kutu(fark.seconds // 3600, "Saat"),
-                zaman_kutu((fark.seconds % 3600) // 60, "Dakika"),
-            ], spacing=8)
+                zaman_kutu(kalan_sn // 86400, "Gün"), zaman_kutu((kalan_sn % 86400) // 3600, "Saat"),
+                zaman_kutu((kalan_sn % 3600) // 60, "Dakika"), zaman_kutu(kalan_sn % 60, "Saniye"),
+            ], spacing=6)
+            gk["metinler"] = metinler
         else:
+            gk["metinler"] = None
             kutular = ft.Text("Sınav Başladı! 🚀", size=24, weight=ft.FontWeight.BOLD, color=beyaz)
         hero = ft.Container(
             padding=20, border_radius=26,
             gradient=ft.LinearGradient(
-                begin=ft.alignment.top_left, end=ft.alignment.bottom_right,
+                begin=UST_SOL, end=ALT_SAG,
                 colors=[karistir(r["hdr"], "#000000", 0.12), karistir(r["hdr"], "#000000", 0.5)],
             ),
-            shadow=ft.BoxShadow(blur_radius=20, color=ft.colors.with_opacity(0.25, r["hdr"]), offset=ft.Offset(0, 8)),
+            shadow=ft.BoxShadow(blur_radius=20, color=opak(0.25, r["hdr"]), offset=ft.Offset(0, 8)),
             content=ft.Column([
-                ft.Row([ft.Icon(ft.icons.ROCKET_LAUNCH_ROUNDED, color=beyaz, size=20),
+                ft.Row([ft.Icon(ik("ROCKET_LAUNCH_ROUNDED"), color=beyaz, size=20),
                         ft.Text(f"YKS {YKS_TARIHI.year}'ye kalan süre", size=14, color=beyaz_sonuk, weight=ft.FontWeight.W_600)]),
                 kutular,
                 ft.Text(f"🎓 {HEDEF_UNIVERSITE}", size=13, color=beyaz, weight=ft.FontWeight.W_600),
@@ -719,9 +944,9 @@ def main(page: ft.Page):
         su = su_guncel()
         mevcut_su = int(su["bardak"])
         istatistikler = ft.Row([
-            stat_kutusu(r, ft.icons.TODAY, sn_kisa(gun_sn(bugun_str())), "Bugün"),
-            stat_kutusu(r, ft.icons.HOURGLASS_BOTTOM, sn_kisa(toplam_sn()), "Toplam"),
-            stat_kutusu(r, ft.icons.WATER_DROP, f"{mevcut_su}/8", "Su"),
+            stat_kutusu(r, ik("TODAY"), sn_kisa(gun_sn(bugun_str())), "Bugün"),
+            stat_kutusu(r, ik("HOURGLASS_BOTTOM"), sn_kisa(toplam_sn()), "Toplam"),
+            stat_kutusu(r, ik("WATER_DROP"), f"{mevcut_su}/8", "Su"),
         ], spacing=10)
 
         # --- Bugünün programı ---
@@ -741,7 +966,7 @@ def main(page: ft.Page):
             for i, task in enumerate(bugunku_gorevler):
                 gorev_listesi.controls.append(gorev_satiri(r, task["gorev"], task["bitti"], i, gorev_tiklandi))
         program_karti = kart(r, ft.Column([
-            bolum_basligi(r, ft.icons.EVENT_AVAILABLE, f"{bugun_ad} Programı",
+            bolum_basligi(r, ik("EVENT_AVAILABLE"), f"{bugun_ad} Programı",
                           ft.Text(f"{bitenler}/{len(bugunku_gorevler)}", size=13, color=r["hdr"], weight=ft.FontWeight.BOLD)),
             ilerleme_cubugu(r, bitenler / len(bugunku_gorevler) if bugunku_gorevler else 0, r["accent"]),
             gorev_listesi,
@@ -772,14 +997,14 @@ def main(page: ft.Page):
             yenile()
 
         todo_kontrolleri = [
-            bolum_basligi(r, ft.icons.CHECKLIST, "Yapılacaklar"),
-            ft.Row([todo_input, ft.IconButton(ft.icons.ADD_CIRCLE, icon_color=r["hdr"], icon_size=38, on_click=todo_ekle)]),
+            bolum_basligi(r, ik("CHECKLIST"), "Yapılacaklar"),
+            ft.Row([todo_input, ft.IconButton(icon=ik("ADD_CIRCLE"), icon_color=r["hdr"], icon_size=38, on_click=todo_ekle)]),
         ]
         if DB["todo"]:
             for i, t in enumerate(DB["todo"]):
                 todo_kontrolleri.append(gorev_satiri(r, t["gorev"], t["bitti"], i, todo_tikla))
             if any(t["bitti"] for t in DB["todo"]):
-                todo_kontrolleri.append(buton(r, "Bitenleri Temizle", todo_temizle, ikon=ft.icons.CLEANING_SERVICES,
+                todo_kontrolleri.append(buton(r, "Bitenleri Temizle", todo_temizle, ikon=ik("CLEANING_SERVICES"),
                                               ikincil=True, genis=True, yukseklik=42))
         else:
             todo_kontrolleri.append(ft.Text("Listen şu an boş.", color=r["muted"], italic=True, size=13))
@@ -800,24 +1025,24 @@ def main(page: ft.Page):
             yenile()
 
         bardak_ikonlari = ft.Row([
-            ft.Icon(ft.icons.WATER_DROP, size=28,
-                    color=r["accent"] if i < mevcut_su else ft.colors.with_opacity(0.25, r["muted"]))
+            ft.Icon(ik("WATER_DROP"), size=28,
+                    color=r["accent"] if i < mevcut_su else opak(0.25, r["muted"]))
             for i in range(8)
         ], spacing=4, alignment=ft.MainAxisAlignment.CENTER)
         su_karti = kart(r, ft.Column([
-            bolum_basligi(r, ft.icons.WATER_DROP, "Su Takibi",
+            bolum_basligi(r, ik("WATER_DROP"), "Su Takibi",
                           ft.Text(f"{mevcut_su} bardak" + (f"  (+{mevcut_su - 8})" if mevcut_su > 8 else ""),
                                   size=13, color=r["hdr"], weight=ft.FontWeight.BOLD)),
             bardak_ikonlari,
             ft.Row([
                 buton(r, "Bir Bardak İçtim 🚰", su_ictim, genis=True),
-                ft.IconButton(ft.icons.REMOVE_CIRCLE_OUTLINE, icon_color=r["muted"], on_click=su_geri, tooltip="Geri al"),
+                ft.IconButton(icon=ik("REMOVE_CIRCLE_OUTLINE"), icon_color=r["muted"], on_click=su_geri, tooltip="Geri al"),
             ]),
         ], spacing=12))
 
         # --- Ödül sistemi ---
         odul_karti = kart(r, ft.Column([
-            bolum_basligi(r, ft.icons.CARD_GIFTCARD, "Ödül Sistemi"),
+            bolum_basligi(r, ik("CARD_GIFTCARD"), "Ödül Sistemi"),
             ft.Text("Kilitli başarıları aç, ödüllerini kazan 👀", size=12, color=r["muted"]),
             *oduller_listesi(r),
         ], spacing=10))
@@ -831,12 +1056,12 @@ def main(page: ft.Page):
         surpriz_icerik = [
             ft.Text("Günün Notu ❤", size=16, weight=ft.FontWeight.W_700, color=r["hdr"]),
             ft.Text("Bu zorlu maratonda her anında yanındayım. Derin bir nefes al ve asla pes etme.", color=r["txt"], size=13),
-            buton(r, "Sürpriz Notu Oku", not_oku, ikon=ft.icons.MAIL, genis=True, ikincil=True, yukseklik=42),
+            buton(r, "Sürpriz Notu Oku", not_oku, ikon=ik("MAIL"), genis=True, ikincil=True, yukseklik=42),
         ]
         if ui["surpriz"]:
             surpriz_icerik.append(ft.Container(
                 padding=16, border_radius=14, bgcolor=r["bg"],
-                border=ft.border.only(left=ft.BorderSide(5, r["accent"])),
+                border=ft.Border(left=ft.BorderSide(5, r["accent"])),
                 content=ft.Column([
                     ft.Text(f"\"{ui['surpriz']}\"", italic=True, color=r["txt"], text_align=ft.TextAlign.CENTER),
                     ft.Text("— Arda", weight=ft.FontWeight.BOLD, color=r["hdr"], text_align=ft.TextAlign.CENTER),
@@ -948,13 +1173,13 @@ def main(page: ft.Page):
         zm["label"] = ft.Text(zaman_metni(), size=44, weight=ft.FontWeight.W_800, color=r["txt"])
         zm["ring"] = ft.ProgressRing(
             value=halka_degeri(), width=250, height=250, stroke_width=12, color=r["hdr"],
-            bgcolor=ft.colors.with_opacity(0.15, r["muted"]),
+            bgcolor=opak(0.15, r["muted"]),
         )
         durum_yazi = {"bos": "Hazır", "calisiyor": "Çalışıyorsun 🔥", "durakladi": "Duraklatıldı ⏸"}[durum]
         daire = ft.Stack([
-            ft.Container(content=zm["ring"], width=250, height=250, alignment=ft.alignment.center),
+            ft.Container(content=zm["ring"], width=250, height=250, alignment=ORTA),
             ft.Container(
-                width=250, height=250, alignment=ft.alignment.center,
+                width=250, height=250, alignment=ORTA,
                 content=ft.Column([
                     zm["label"],
                     ft.Text(durum_yazi, size=13, color=r["muted"], weight=ft.FontWeight.W_600),
@@ -965,15 +1190,15 @@ def main(page: ft.Page):
         if durum == "bos":
             butonlar = ft.Column([
                 buton(r, "Başlat" if zm["mod"] == "krono" else "25 Dk Pomodoro Başlat", baslat,
-                      ikon=ft.icons.PLAY_ARROW, genis=True, yukseklik=56),
+                      ikon=ik("PLAY_ARROW"), genis=True, yukseklik=56),
             ])
         else:
-            ana_btn = (buton(r, "Duraklat", duraklat, ikon=ft.icons.PAUSE, genis=True, ikincil=True, yukseklik=56)
+            ana_btn = (buton(r, "Duraklat", duraklat, ikon=ik("PAUSE"), genis=True, ikincil=True, yukseklik=56)
                        if durum == "calisiyor" else
-                       buton(r, "Devam Et", devam, ikon=ft.icons.PLAY_ARROW, genis=True, ikincil=True, yukseklik=56))
+                       buton(r, "Devam Et", devam, ikon=ik("PLAY_ARROW"), genis=True, ikincil=True, yukseklik=56))
             butonlar = ft.Column([
-                ft.Row([ana_btn, buton(r, "Bitir", bitir, ikon=ft.icons.STOP_CIRCLE, genis=True, yukseklik=56)], spacing=12),
-                ft.TextButton("Kaydetmeden sıfırla", on_click=sifirla, style=ft.ButtonStyle(color=r["muted"])),
+                ft.Row([ana_btn, buton(r, "Bitir", bitir, ikon=ik("STOP_CIRCLE"), genis=True, yukseklik=56)], spacing=12),
+                metin_dugmesi("Kaydetmeden sıfırla", on_click=sifirla, style=ft.ButtonStyle(color=r["muted"])),
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2)
 
         secici = segment(r, ["⏱ Kronometre", "🍅 Pomodoro"], 0 if zm["mod"] == "krono" else 1,
@@ -995,7 +1220,7 @@ def main(page: ft.Page):
         return ft.Column([
             sayfa_basligi(r, "Çalışma Masası", "Bitir'e bastığında süre bugüne ve toplama eklenir"),
             secici,
-            ft.Container(content=daire, alignment=ft.alignment.center, padding=ft.padding.symmetric(vertical=10)),
+            ft.Container(content=daire, alignment=ORTA, padding=pad_sim(vertical=10)),
             butonlar,
             bugun_karti,
             ft.Container(height=24),
@@ -1005,6 +1230,14 @@ def main(page: ft.Page):
     # 9. NETLER, MÜFREDAT, EKSİKLER
     # ==========================================
     def net_grafigi(r, kayitlar):
+        try:
+            return _net_grafigi_ciz(r, kayitlar)
+        except Exception as ex:
+            print("Grafik cizilemedi:", ex)
+            return ft.Column([ft.Text(f"{i + 1}) {k['ad']} — {k['toplam']:.2f} net", size=12, color=r["muted"])
+                              for i, k in enumerate(kayitlar)], spacing=6)
+
+    def _net_grafigi_ciz(r, kayitlar):
         n = len(kayitlar)
         if n == 0:
             return ft.Text("Henüz deneme eklenmemiş.", color=r["muted"], italic=True)
@@ -1013,18 +1246,18 @@ def main(page: ft.Page):
         seri = ft.LineChartData(
             data_points=[ft.LineChartDataPoint(i, k["toplam"], tooltip=f"{k['ad']}: {k['toplam']:.2f}") for i, k in enumerate(kayitlar)],
             stroke_width=3, color=r["hdr"], curved=True, stroke_cap_round=True,
-            below_line_bgcolor=ft.colors.with_opacity(0.12, r["hdr"]),
+            below_line_bgcolor=opak(0.12, r["hdr"]),
         )
         etiketler = [
-            ft.ChartAxisLabel(value=i, label=ft.Container(ft.Text(str(i + 1), size=11, color=r["muted"]), padding=ft.padding.only(top=6)))
+            ft.ChartAxisLabel(value=i, label=ft.Container(ft.Text(str(i + 1), size=11, color=r["muted"]), padding=pad_only(top=6)))
             for i in range(n)
         ]
         grafik = ft.LineChart(
             data_series=[seri], min_y=0, max_y=max_y, min_x=-0.3, max_x=(n - 1) + 0.3, height=220,
-            horizontal_grid_lines=ft.ChartGridLines(color=ft.colors.with_opacity(0.15, r["muted"]), width=1),
+            horizontal_grid_lines=ft.ChartGridLines(color=opak(0.15, r["muted"]), width=1),
             left_axis=ft.ChartAxis(labels_size=38, labels_interval=aralik),
             bottom_axis=ft.ChartAxis(labels=etiketler, labels_size=28),
-            border=ft.border.all(1, ft.colors.with_opacity(0.2, r["muted"])),
+            border=kenar(1, opak(0.2, r["muted"])),
         )
         liste = [ft.Text(f"{i + 1}) {k['ad']} — {k['toplam']:.2f} net", size=12, color=r["muted"]) for i, k in enumerate(kayitlar)]
         return ft.Column([grafik, *liste], spacing=6)
@@ -1072,11 +1305,13 @@ def main(page: ft.Page):
                 "toplam": tr_ + mat_ + sos_ + fen_,
             })
             kaydet("netler")
+            yonetici_haber(f"📈 {kullanici_adi()} yeni deneme ekledi",
+                           f"{ad} ({sinav_radyo.value}) • {tr_ + mat_ + sos_ + fen_:.2f} net")
             snack("Eklendi! ✅")
             yenile()
 
         form = kart(r, ft.Column([
-            bolum_basligi(r, ft.icons.EDIT_NOTE, "Yeni Deneme Ekle"),
+            bolum_basligi(r, ik("EDIT_NOTE"), "Yeni Deneme Ekle"),
             ad_input, sinav_radyo,
             ft.Row([tr_in, mat_in], spacing=10),
             ft.Row([sos_in, fen_in], spacing=10),
@@ -1092,7 +1327,7 @@ def main(page: ft.Page):
         secili = ui["net_sinav"]
         kayitlar = [n for n in netler if n["sinav"] == secili]
         analiz = [
-            bolum_basligi(r, ft.icons.INSIGHTS, "Analiz"),
+            bolum_basligi(r, ik("INSIGHTS"), "Analiz"),
             ft.Row([
                 buton(r, "TYT", sinav_sec("TYT"), genis=True, ikincil=secili != "TYT", yukseklik=42),
                 buton(r, "AYT", sinav_sec("AYT"), genis=True, ikincil=secili != "AYT", yukseklik=42),
@@ -1105,11 +1340,11 @@ def main(page: ft.Page):
             for anahtar, etiket in ders_adlari:
                 fark = son[anahtar] - ilk[anahtar]
                 metrikler.append(ft.Container(
-                    width=96, padding=10, border_radius=14, bgcolor=r["bg"], border=ft.border.all(1, r["border"]),
+                    width=96, padding=10, border_radius=14, bgcolor=r["bg"], border=kenar(1, r["border"]),
                     content=ft.Column([
                         ft.Text(etiket, size=11, color=r["muted"]),
                         ft.Text(f"{son[anahtar]:g}", size=20, weight=ft.FontWeight.BOLD, color=r["txt"]),
-                        ft.Text(f"{fark:+.2f}", size=12, weight=ft.FontWeight.BOLD, color=r["accent"] if fark >= 0 else ft.colors.RED_400),
+                        ft.Text(f"{fark:+.2f}", size=12, weight=ft.FontWeight.BOLD, color=r["accent"] if fark >= 0 else KIRMIZI),
                     ], spacing=2),
                 ))
             analiz.append(ft.Row(metrikler, wrap=True, spacing=8, run_spacing=8))
@@ -1149,9 +1384,9 @@ def main(page: ft.Page):
             oran_guncelle()
             page.update()
 
-        ders_dropdown = ft.Dropdown(
-            label="Ders", value=ui["ders"], on_change=ders_degisti,
-            options=[ft.dropdown.Option(d) for d in KONULAR], border_color=r["border"],
+        ders_dropdown = dd_olustur(
+            list(KONULAR), ui["ders"], ders_degisti,
+            label="Ders", border_color=r["border"],
             focused_border_color=r["hdr"], color=r["txt"], border_radius=14,
             label_style=ft.TextStyle(color=r["muted"]),
         )
@@ -1193,15 +1428,15 @@ def main(page: ft.Page):
             yenile()
 
         icerik = [
-            bolum_basligi(r, ft.icons.TRACK_CHANGES, "Eksik Avcısı"),
-            ft.Row([yeni, ft.IconButton(ft.icons.ADD_CIRCLE, icon_color=r["hdr"], icon_size=38, on_click=at)]),
+            bolum_basligi(r, ik("TRACK_CHANGES"), "Eksik Avcısı"),
+            ft.Row([yeni, ft.IconButton(icon=ik("ADD_CIRCLE"), icon_color=r["hdr"], icon_size=38, on_click=at)]),
         ]
         for i, k in enumerate(DB["kumbara"]):
             icerik.append(gorev_satiri(r, k["eksik"], k["bitti"], i, tikla))
         if not DB["kumbara"]:
             icerik.append(ft.Text("Eksik listesi şu an boş. Yanlış yaptığın konuları buraya at 🎯", color=r["muted"], italic=True, size=13))
         elif any(k["bitti"] for k in DB["kumbara"]):
-            icerik.append(buton(r, "Halledilenleri Temizle", temizle, ikon=ft.icons.CLEANING_SERVICES, ikincil=True, genis=True, yukseklik=42))
+            icerik.append(buton(r, "Halledilenleri Temizle", temizle, ikon=ik("CLEANING_SERVICES"), ikincil=True, genis=True, yukseklik=42))
         return [kart(r, ft.Column(icerik, spacing=10))]
 
     def net_sayfasi_olustur(r):
@@ -1237,14 +1472,14 @@ def main(page: ft.Page):
             biten = sum(1 for t in DB["plan"][g] if t["bitti"])
             toplam = len(DB["plan"][g])
             cipler.append(ft.Container(
-                width=58, padding=ft.padding.symmetric(vertical=10), border_radius=16, ink=True, on_click=gun_sec(i),
+                width=58, padding=pad_sim(vertical=10), border_radius=16, ink=True, on_click=gun_sec(i),
                 bgcolor=r["hdr"] if aktif else r["card_bg"],
-                border=ft.border.all(2 if i == bugun_i else 1, r["accent"] if i == bugun_i and not aktif else r["border"]),
+                border=kenar(2 if i == bugun_i else 1, r["accent"] if i == bugun_i and not aktif else r["border"]),
                 content=ft.Column([
                     ft.Text(GUN_KISA[i], size=13, weight=ft.FontWeight.W_700,
                             color=okunur_renk(r["hdr"]) if aktif else r["txt"]),
                     ft.Text(f"{biten}/{toplam}", size=11,
-                            color=ft.colors.with_opacity(0.8, okunur_renk(r["hdr"])) if aktif else r["muted"]),
+                            color=opak(0.8, okunur_renk(r["hdr"])) if aktif else r["muted"]),
                 ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             ))
 
@@ -1280,15 +1515,15 @@ def main(page: ft.Page):
         satirlar = []
         for i, t in enumerate(gorevler):
             satirlar.append(ft.Container(
-                padding=ft.padding.only(left=4, right=4), border_radius=16,
-                bgcolor=ft.colors.with_opacity(0.10, r["accent"]) if t["bitti"] else r["bg"],
-                border=ft.border.all(1, ft.colors.with_opacity(0.5, r["border"])),
+                padding=pad_only(left=4, right=4), border_radius=16,
+                bgcolor=opak(0.10, r["accent"]) if t["bitti"] else r["bg"],
+                border=kenar(1, opak(0.5, r["border"])),
                 content=ft.Row([
                     ft.Checkbox(value=t["bitti"], data=i, on_change=tikla, fill_color=r["accent"], check_color=r["card_bg"]),
                     ft.Text(t["gorev"], expand=True, size=14, weight=ft.FontWeight.W_600,
                             color=r["muted"] if t["bitti"] else r["txt"],
                             style=ft.TextStyle(decoration=ft.TextDecoration.LINE_THROUGH if t["bitti"] else ft.TextDecoration.NONE)),
-                    ft.IconButton(ft.icons.DELETE_OUTLINE, icon_color=ft.colors.RED_400, data=i, on_click=sil),
+                    ft.IconButton(icon=ik("DELETE_OUTLINE"), icon_color=KIRMIZI, data=i, on_click=sil),
                 ], spacing=0),
             ))
         if not satirlar:
@@ -1299,12 +1534,12 @@ def main(page: ft.Page):
             sayfa_basligi(r, "Haftalık Plan", "Eklediklerin ana sayfana yansır"),
             ft.Row(cipler, scroll=ft.ScrollMode.AUTO, spacing=8),
             kart(r, ft.Column([
-                bolum_basligi(r, ft.icons.EVENT_NOTE, g_ad,
+                bolum_basligi(r, ik("EVENT_NOTE"), g_ad,
                               ft.Text(f"{biten}/{len(gorevler)}", size=13, color=r["hdr"], weight=ft.FontWeight.BOLD)),
-                ft.Row([yeni_in, ft.IconButton(ft.icons.ADD_CIRCLE, icon_color=r["hdr"], icon_size=38, on_click=ekle)]),
+                ft.Row([yeni_in, ft.IconButton(icon=ik("ADD_CIRCLE"), icon_color=r["hdr"], icon_size=38, on_click=ekle)]),
                 *satirlar,
             ], spacing=10)),
-            buton(r, "Haftanın Tiklerini Sıfırla", haftayi_sifirla, ikon=ft.icons.REFRESH, ikincil=True, genis=True, yukseklik=44),
+            buton(r, "Haftanın Tiklerini Sıfırla", haftayi_sifirla, ikon=ik("REFRESH"), ikincil=True, genis=True, yukseklik=44),
             ft.Container(height=24),
         ], scroll=ft.ScrollMode.AUTO, expand=True, spacing=14)
 
@@ -1347,10 +1582,10 @@ def main(page: ft.Page):
             ], spacing=10)
 
         ozet = kart(r, ft.Column([
-            bolum_basligi(r, ft.icons.NIGHTLIGHT_ROUND, "Bugünün Özeti"),
-            bilgi(ft.icons.WB_SUNNY, "Derse başlama", baslama or "Kronometre başlatılmadı"),
-            bilgi(ft.icons.TIMER, "Çalışma süresi", sn_metni(bugun_toplam)),
-            bilgi(ft.icons.BEDTIME, "Bitiş saati", f"Kaydedince ({datetime.now().strftime('%H:%M')})"),
+            bolum_basligi(r, ik("NIGHTLIGHT_ROUND"), "Bugünün Özeti"),
+            bilgi(ik("WB_SUNNY"), "Derse başlama", baslama or "Kronometre başlatılmadı"),
+            bilgi(ik("TIMER"), "Çalışma süresi", sn_metni(bugun_toplam)),
+            bilgi(ik("BEDTIME"), "Bitiş saati", f"Kaydedince ({datetime.now().strftime('%H:%M')})"),
             *([ft.Text("⏱ Kronometre açık, kaydedince süresi otomatik eklenecek.", size=12, color=r["hdr"])] if canli else []),
         ], spacing=12))
 
@@ -1364,10 +1599,10 @@ def main(page: ft.Page):
         for i, (emoji, _) in enumerate(PERFORMANS, start=1):
             secili = ui["gs_puan"] == i
             puan_butonlari.append(ft.Container(
-                expand=True, padding=ft.padding.symmetric(vertical=12), border_radius=14, ink=True,
-                alignment=ft.alignment.center, on_click=puan_sec(i),
-                bgcolor=ft.colors.with_opacity(0.18, r["hdr"]) if secili else r["bg"],
-                border=ft.border.all(2 if secili else 1, r["hdr"] if secili else r["border"]),
+                expand=True, padding=pad_sim(vertical=12), border_radius=14, ink=True,
+                alignment=ORTA, on_click=puan_sec(i),
+                bgcolor=opak(0.18, r["hdr"]) if secili else r["bg"],
+                border=kenar(2 if secili else 1, r["hdr"] if secili else r["border"]),
                 content=ft.Text(emoji, size=28 if secili else 24),
             ))
         puan_yazi = PERFORMANS[ui["gs_puan"] - 1][1] if ui["gs_puan"] else "Bir yüz seç"
@@ -1393,12 +1628,15 @@ def main(page: ft.Page):
             }
             DB["gunluk"] = [g for g in DB["gunluk"] if g["tarih"] != bugun] + [kayit]
             kaydet("gunluk")
+            p_ = PERFORMANS[ui["gs_puan"] - 1]
+            yonetici_haber(f"🌙 {kullanici_adi()} gününü kaydetti",
+                           f"{sn_metni(sn)} çalıştı • {p_[0]} {p_[1]}" + (f" • {kayit['gunluk'][:80]}" if kayit["gunluk"] else ""))
             snack("Gün kaydedildi. İyi uykular! 💖")
             kutlama()
             yenile()
 
         performans_karti = kart(r, ft.Column([
-            bolum_basligi(r, ft.icons.EMOJI_EMOTIONS, "Bugünkü performansın nasıldı?"),
+            bolum_basligi(r, ik("EMOJI_EMOTIONS"), "Bugünkü performansın nasıldı?"),
             ft.Row(puan_butonlari, spacing=8),
             ft.Text(puan_yazi, size=13, color=r["hdr"], weight=ft.FontWeight.W_700, text_align=ft.TextAlign.CENTER),
             not_in,
@@ -1420,15 +1658,15 @@ def main(page: ft.Page):
             if k.get("gunluk"):
                 govde.append(ft.Text(k["gunluk"], size=13, color=r["txt"]))
             gecmis.append(ft.Container(
-                padding=12, border_radius=16, bgcolor=r["bg"], border=ft.border.all(1, r["border"]),
+                padding=12, border_radius=16, bgcolor=r["bg"], border=kenar(1, r["border"]),
                 content=ft.Column(govde, spacing=4)))
         if not gecmis:
             gecmis.append(ft.Text("Henüz kayıtlı gün yok. İlk günü kaydetmeye ne dersin?", color=r["muted"], italic=True, size=13))
 
         return ft.Column([
             ozet, performans_karti,
-            kart(r, ft.Column([bolum_basligi(r, ft.icons.BAR_CHART, "Son 7 Gün (saat)"), haftalik_bar(r)], spacing=12)),
-            kart(r, ft.Column([bolum_basligi(r, ft.icons.HISTORY, "Gün Gün Kayıtlar"), *gecmis], spacing=10)),
+            kart(r, ft.Column([bolum_basligi(r, ik("BAR_CHART"), "Son 7 Gün (saat)"), haftalik_bar(r)], spacing=12)),
+            kart(r, ft.Column([bolum_basligi(r, ik("HISTORY"), "Gün Gün Kayıtlar"), *gecmis], spacing=10)),
             ft.Container(height=24),
         ], scroll=ft.ScrollMode.AUTO, expand=True, spacing=14)
 
@@ -1464,7 +1702,7 @@ def main(page: ft.Page):
                         ft.Text(f"⚡ Yanıtlayan servis: {servis}", size=11, color=r["muted"]),
                     ], spacing=8)))
                 else:
-                    sonuc.controls.append(ft.Text("⚠️ Sistem şu an yanıt veremedi. Detaylar:", color=ft.colors.RED_400, weight=ft.FontWeight.BOLD))
+                    sonuc.controls.append(ft.Text("⚠️ Sistem şu an yanıt veremedi. Detaylar:", color=KIRMIZI, weight=ft.FontWeight.BOLD))
                     for h in hatalar:
                         sonuc.controls.append(ft.Text(h, size=12, color=r["muted"]))
                 bekle.visible = False
@@ -1544,8 +1782,8 @@ def main(page: ft.Page):
 
         for i in range(9):
             hucreler.append(ft.Container(
-                width=78, height=78, border_radius=16, bgcolor=r["bg"], border=ft.border.all(2, r["border"]),
-                alignment=ft.alignment.center, data=i, on_click=tikla, ink=True,
+                width=78, height=78, border_radius=16, bgcolor=r["bg"], border=kenar(2, r["border"]),
+                alignment=ORTA, data=i, on_click=tikla, ink=True,
                 content=ft.Text(oyun["xox"][i] or "⬜", size=32),
             ))
         sonuc.value = sonuc_yazisi()
@@ -1555,14 +1793,14 @@ def main(page: ft.Page):
             ft.Row(hucreler[6:9], alignment=ft.MainAxisAlignment.CENTER),
         ], spacing=8)
         return [kart(r, ft.Column([
-            bolum_basligi(r, ft.icons.GRID_3X3, "Arda-Bot'a Karşı XOX"),
+            bolum_basligi(r, ik("GRID_3X3"), "Arda-Bot'a Karşı XOX"),
             grid, sonuc,
             buton(r, "Oyunu Sıfırla 🔄", sifirla, genis=True, ikincil=True),
         ], spacing=14))]
 
     def youtube_olustur(r):
         def ac(url):
-            return lambda e: page.launch_url(url)
+            return lambda e: url_ac(url)
 
         def kanal(emoji, ad, url, yazi):
             return kart(r, ft.Row([
@@ -1591,23 +1829,23 @@ def main(page: ft.Page):
 
     def muzik_sayfasi_olustur(r):
         def ac(url):
-            return lambda e: page.launch_url(url)
+            return lambda e: url_ac(url)
 
         def liste_karti(emoji, ad, aciklama, url):
             return kart(r, ft.Row([
                 ft.Text(emoji, size=30),
                 ft.Column([ft.Text(ad, weight=ft.FontWeight.W_700, color=r["txt"]),
                            ft.Text(aciklama, size=12, color=r["muted"])], spacing=2, expand=True),
-                ft.IconButton(ft.icons.OPEN_IN_NEW, icon_color=r["hdr"], on_click=ac(url)),
+                ft.IconButton(icon=ik("OPEN_IN_NEW"), icon_color=r["hdr"], on_click=ac(url)),
             ], spacing=12), padding=14)
 
         return ft.Column([
             kart(r, ft.Column([
-                ft.Icon(ft.icons.HEADPHONES, size=56, color=r["hdr"]),
+                ft.Icon(ik("HEADPHONES"), size=56, color=r["hdr"]),
                 ft.Text("Ders Çalışma Listesi", size=19, weight=ft.FontWeight.W_800, color=r["txt"]),
                 ft.Text("Odak listen Spotify'da seni bekliyor. Kulaklığını tak ve başla 🎶", color=r["muted"],
                         text_align=ft.TextAlign.CENTER, size=13),
-                buton(r, "Spotify'da Aç", ac(SPOTIFY_URL), ikon=ft.icons.OPEN_IN_NEW, genis=True),
+                buton(r, "Spotify'da Aç", ac(SPOTIFY_URL), ikon=ik("OPEN_IN_NEW"), genis=True),
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12)),
             ft.Text("Diğer odak sesleri", size=13, color=r["muted"], weight=ft.FontWeight.W_600),
             liste_karti("🎹", "Lofi / Çalışma Müziği", "YouTube'da ara", "https://www.youtube.com/results?search_query=lofi+study+music"),
@@ -1617,150 +1855,226 @@ def main(page: ft.Page):
         ], scroll=ft.ScrollMode.AUTO, expand=True, spacing=12)
 
     # ==========================================
-    # 13. ARDA'NIN PANELİ
+    # 13. ARDA'NIN PANELİ (canlı)
     # ==========================================
+    panel = {"kap": None, "imza": {}, "veri": {}}
+
+    def imza_hesapla(users):
+        return {u: [len(listeye(d.get("gunluk"))), len(listeye(d.get("netler")))]
+                for u, d in users.items() if isinstance(d, dict)}
+
+    def ogrenci_kartlari(r, users):
+        bugun = bugun_str()
+        kartlar = []
+        for uname in sorted(users):
+            u = users[uname]
+            if not isinstance(u, dict):
+                continue
+            loglar = listeye(u.get("gunluk"))
+            netler = listeye(u.get("netler"))
+            sn_t = bulut_coz("calisma_sn", u.get("calisma_sn") or {})
+            log_t = bulut_coz("calisma_log", u.get("calisma_log") or {})
+            bugun_sn_ = int(sayi(sn_t.get(bugun))) + int(sayi(log_t.get(bugun))) * 60
+            toplam_ = sum(int(sayi(v)) for v in sn_t.values()) + sum(int(sayi(v)) for v in log_t.values()) * 60
+            su = u.get("su") or {}
+            bardak = int(sayi(su.get("bardak"))) if su.get("tarih") == bugun else 0
+            gun = u.get("gun") or {}
+            baslama = gun.get("baslama") if gun.get("tarih") == bugun else None
+            satirlar = [
+                ft.Text(f"👤 {uname.upper()}", weight=ft.FontWeight.BOLD, color=r["hdr"], size=16),
+                ft.Text(f"⏱ Bugün {sn_metni(bugun_sn_)}   •   Toplam {sn_metni(toplam_)}", color=r["txt"], size=13),
+                ft.Text(f"🌅 Derse başlama: {baslama or 'henüz başlamadı'}   •   💧 {bardak} bardak", color=r["txt"], size=13),
+            ]
+            if loglar:
+                son = loglar[-1]
+                p = int(sayi(son.get("performans")))
+                emoji = PERFORMANS[p - 1][0] if 1 <= p <= 5 else "📝"
+                sure = sn_metni(son["sn"]) if "sn" in son else f"{sayi(son.get('saat')):g} sa"
+                satirlar.append(ft.Text(f"🌙 Son gün sonu: {son.get('tarih', '-')} • {sure} • {emoji}", color=r["txt"], size=13))
+                if son.get("gunluk"):
+                    satirlar.append(ft.Text(f"“{str(son['gunluk'])[:90]}”", color=r["muted"], size=12, italic=True))
+            else:
+                satirlar.append(ft.Text("🌙 Henüz gün sonu kaydı yok.", color=r["muted"], size=13))
+            if netler:
+                n = netler[-1]
+                satirlar.append(ft.Text(f"📈 Son deneme: {n.get('ad', '-')} ({n.get('sinav', '-')}) • {sayi(n.get('toplam')):.2f} net",
+                                        color=r["txt"], size=13))
+            kartlar.append(kart(r, ft.Column(satirlar, spacing=4), padding=14))
+        return kartlar
+
+    def ogrenciye_gonder(ogr, baslik, mesaj):
+        """Öğrenciye hem gerçek telefon bildirimi hem uygulama içi sinyal gönderir."""
+        def is_():
+            try:
+                bulut_patch(f"users/{ogr}", {"sinyal": {"aktif": True, "mesaj": mesaj}})
+                konu = (bulut_get(f"users/{ogr}/bildirim") or {}).get("konu")
+                if konu:
+                    ok, hata = ntfy_gonder(konu, baslik, mesaj, 4)
+                    snack(f"✅ {ogr} kişisine gönderildi" if ok else f"⚠️ Bildirim gitmedi: {hata}")
+                else:
+                    snack(f"⚠️ {ogr} bildirimi henüz kurmamış, sadece uygulama içi sinyal gitti.")
+            except Exception as ex:
+                snack(f"⚠️ Gönderilemedi: {ex}")
+        arka_plan(is_)
+
+    def yonetici_kaydet():
+        """Panele giren kişi yönetici olur: öğrenci kayıtları bu kişinin telefonuna bildirim düşer."""
+        def is_():
+            try:
+                bildirim_konu_hazirla()
+                bulut_patch("yonetici", {"konu": DB["bildirim"].get("konu", ""), "kullanici": oturum["kullanici"]})
+            except Exception as ex:
+                print("Yönetici kaydı yapılamadı:", ex)
+        arka_plan(is_)
+
     def panel_sayfasi_olustur(r):
         if not ui["panel_giris"]:
-            sifre = girdi(r, label="Panel Şifresi", password=True, can_reveal_password=True, keyboard_type=ft.KeyboardType.NUMBER)
-            hata = ft.Text(ui["panel_hata"], color=ft.colors.RED_400)
+            sifre = girdi(r, label="Panel Şifresi", password=True, can_reveal_password=True,
+                          keyboard_type=ft.KeyboardType.NUMBER)
+            hata = ft.Text(ui["panel_hata"], color=KIRMIZI)
+
             def giris(e):
                 if (sifre.value or "") == PANEL_SIFRESI:
-                    ui["panel_giris"] = True; ui["panel_hata"] = ""; snack("Giriş Başarılı! ✅")
-                else: ui["panel_hata"] = "Şifre yanlış!"
+                    ui["panel_giris"] = True
+                    ui["panel_hata"] = ""
+                    yonetici_kaydet()
+                    snack("Giriş Başarılı! ✅")
+                else:
+                    ui["panel_hata"] = "Şifre yanlış!"
                 yenile()
-            sifre.on_submit = giris
-            return ft.Column([kart(r, ft.Column([bolum_basligi(r, ft.icons.LOCK, "Arda'nın Yönetici Paneli"), sifre, hata, buton(r, "Giriş", giris, genis=True)], spacing=12))], expand=True, scroll=ft.ScrollMode.AUTO)
 
-        # Tüm Öğrencilerin Verilerini Çek
-        tum_veriler = []
+            sifre.on_submit = giris
+            return ft.Column([kart(r, ft.Column([
+                bolum_basligi(r, ik("LOCK"), "Arda'nın Yönetici Paneli"), sifre, hata,
+                buton(r, "Giriş", giris, genis=True)], spacing=12))], expand=True, scroll=ft.ScrollMode.AUTO)
+
+        hata_yazi = ""
         try:
             users = bulut_oku() or {}
-            for uname, udata in users.items():
-                udata = udata if isinstance(udata, dict) else {}
-                loglar = listeye(udata.get("gunluk"))
-                son_log = loglar[-1] if loglar else None
-                if son_log:
-                    p = int(son_log.get("performans", 0) or 0)
-                    emoji = PERFORMANS[p - 1][0] if 1 <= p <= 5 else "-"
-                    satir1 = f"Son Kayıt: {son_log.get('tarih', '-')} | Süre: {son_log.get('saat', 0)} saat"
-                    satir2 = f"Duygu: {emoji} | Not: {(son_log.get('gunluk') or '-')[:50]}"
-                else:
-                    satir1, satir2 = "Henüz gün kaydı yok.", ""
-                tum_veriler.append(kart(r, ft.Column([
-                    ft.Text(f"👤 Öğrenci: {uname.upper()}", weight=ft.FontWeight.BOLD, color=r["hdr"], size=16),
-                    ft.Text(satir1, color=r["txt"]),
-                    ft.Text(satir2, color=r["muted"], size=12),
-                ], spacing=4)))
-            if not tum_veriler:
-                tum_veriler.append(ft.Text("Henüz kayıtlı öğrenci yok.", color=r["muted"], italic=True))
         except Exception as ex:
-            tum_veriler.append(ft.Text(f"Buluttan veriler çekilemedi: {ex}", color=ft.colors.RED_400))
+            users = {}
+            hata_yazi = f"Buluttan veriler çekilemedi: {ex}"
+        panel["veri"] = users
+        panel["imza"] = imza_hesapla(users)
+        isimler = sorted(k for k, v in users.items() if isinstance(v, dict))
+        if ui["panel_ogrenci"] not in isimler:
+            ui["panel_ogrenci"] = isimler[0] if isimler else None
+        sec = ui["panel_ogrenci"]
 
-        veri_tab = [bolum_basligi(r, ft.icons.GROUPS, "Tüm Öğrenci Kayıtları"), *tum_veriler]
+        def ogr_sec(isim):
+            def f(e):
+                ui["panel_ogrenci"] = isim
+                yenile()
+            return f
 
-        def degisti(i): 
-            ui["panel_tab"] = i
-            yenile()
-            
-        sekmeler = [veri_tab]
-        return ft.Column([segment(r, ["📈 Öğrenci Verileri"], ui["panel_tab"], degisti), *sekmeler[ui["panel_tab"]], ft.Container(height=24)], scroll=ft.ScrollMode.AUTO, expand=True, spacing=14)
-        # --- Sinyal ---
-        sinyal_in = girdi(r, "Örn: Mola verme zamanı! ☕", label="Mesaj")
+        ciplar = ft.Row([
+            ft.Container(
+                padding=pad_sim(horizontal=14, vertical=8), border_radius=20, ink=True, on_click=ogr_sec(i),
+                bgcolor=r["hdr"] if i == sec else r["card_bg"], border=kenar(1, r["border"]),
+                content=ft.Text(i.upper(), size=12, weight=ft.FontWeight.W_700,
+                                color=okunur_renk(r["hdr"]) if i == sec else r["txt"]))
+            for i in isimler
+        ], scroll=ft.ScrollMode.AUTO, spacing=8)
 
-        def sinyal_gonder(e):
-            m = (sinyal_in.value or "").strip()
-            if m:
-                DB["sinyal"] = {"aktif": True, "mesaj": m}
-                kaydet("sinyal")
-                snack("Sinyal iletildi! ✨")
+        # --- Sekme 0: canlı öğrenci verileri ---
+        kap = ft.Column(ogrenci_kartlari(r, users) or
+                        [ft.Text("Henüz kayıtlı öğrenci yok.", color=r["muted"], italic=True)], spacing=10)
+        panel["kap"] = kap
+        sekme0 = [
+            ft.Text("🔴 Canlı: öğrenci bir şey kaydedince burada birkaç saniye içinde belirir "
+                    "ve telefonuna bildirim düşer (ntfy kuruluysa).", size=12, color=r["muted"]),
+            *([ft.Text(hata_yazi, color=KIRMIZI)] if hata_yazi else []),
+            kap,
+        ]
+
+        # --- Sekme 1: bildirim gönder ---
+        mesaj_in = girdi(r, "Kendi mesajını yaz...", label="Mesaj", multiline=True, min_lines=2, max_lines=4)
+        HAZIR = [
+            ("💧 Su içmeyi unutma!", "Bir bardak su iç, sonra devam. 💧"),
+            ("📚 Derse başla!", "Kronometreyi aç ve başla, ben buradayım. 📚"),
+            ("😠 Neredesin?", "Saat ilerliyor, ders çalışmayı unutmadın değil mi? 😠"),
+            ("☕ Mola zamanı", "Çok güzel çalıştın, 10 dakika mola ver. ☕"),
+            ("❤️ Gurur duyuyorum", "Seninle gurur duyuyorum, devam et! ❤️"),
+        ]
+
+        def hazir_gonder(baslik, mesaj):
+            def f(e):
+                if sec:
+                    ogrenciye_gonder(sec, baslik, mesaj)
+                else:
+                    snack("Önce bir öğrenci seç.")
+            return f
+
+        def ozel_gonder(e):
+            m = (mesaj_in.value or "").strip()
+            if not sec:
+                snack("Önce bir öğrenci seç.")
+            elif not m:
+                snack("Önce bir mesaj yaz.")
+            else:
+                ogrenciye_gonder(sec, "💌 Arda'dan mesaj", m)
 
         def sinyal_kapat(e):
-            DB["sinyal"] = {"aktif": False, "mesaj": ""}
-            kaydet("sinyal")
-            snack("Sinyal kapatıldı.")
+            if sec:
+                arka_plan(lambda: bulut_patch(f"users/{sec}", {"sinyal": {"aktif": False, "mesaj": ""}}))
+                snack("Uygulama içi sinyal kapatıldı.")
 
-        sinyal_tab = [kart(r, ft.Column([
-            bolum_basligi(r, ft.icons.NOTIFICATIONS_ACTIVE, "Canlı Sinyal Gönder"),
-            sinyal_in,
-            buton(r, "Sinyali Gönder 🚀", sinyal_gonder, genis=True),
-            buton(r, "Sinyali Kapat 🛑", sinyal_kapat, genis=True, ikincil=True),
-        ], spacing=12))]
+        sekme1 = [
+            ft.Text("Seçili öğrenciye hem telefon bildirimi hem uygulama içi sinyal gider.", size=12, color=r["muted"]),
+            kart(r, ft.Column([
+                bolum_basligi(r, ik("NOTIFICATIONS_ACTIVE"), "Hazır mesajlar"),
+                *[buton(r, b_, hazir_gonder(b_, m_), ikincil=True, genis=True, yukseklik=42) for b_, m_ in HAZIR],
+            ], spacing=8)),
+            kart(r, ft.Column([
+                bolum_basligi(r, ik("EDIT_NOTE"), "Kendi mesajın"),
+                mesaj_in,
+                buton(r, "Gönder 🚀", ozel_gonder, genis=True),
+                buton(r, "Uygulama içi sinyali kapat", sinyal_kapat, ikincil=True, genis=True, yukseklik=42),
+            ], spacing=10)),
+        ]
 
-        # --- Görev ver ---
+        # --- Sekme 2: görev ver ---
         gorev_in = girdi(r, label="Yapılacak görev")
         odul_in = girdi(r, label="Tamamlarsa ödül (Örn: Kahve benden!)")
 
-        def gorev_gonder(e):
+        def gorev_ver(e):
             g = (gorev_in.value or "").strip()
-            if g:
-                DB["ozel_gorevler"].append({"gorev": g, "odul": (odul_in.value or "").strip(), "durum": "Bekliyor"})
-                kaydet("ozel_gorevler")
-                snack("Görev ana sayfadaki Ödül Sistemi'ne eklendi!")
-                yenile()
+            o = (odul_in.value or "").strip()
+            if not sec or not g:
+                snack("Öğrenci seç ve görevi yaz.")
+                return
 
-        gorev_liste = [ft.Text(f"{'✅' if g['durum'] == 'Tamamlandı' else '⏳'} {g['gorev']} → {g['odul']}", size=12, color=r["muted"])
-                       for g in DB["ozel_gorevler"]]
-        gorev_tab = [kart(r, ft.Column([
-            bolum_basligi(r, ft.icons.ASSIGNMENT, "Özel Görev Tanımla"),
-            gorev_in, odul_in, buton(r, "Gönder", gorev_gonder, genis=True), *gorev_liste,
-        ], spacing=12))]
+            def is_():
+                try:
+                    liste = listeye(bulut_get(f"users/{sec}/ozel_gorevler"))
+                    liste.append({"gorev": g, "odul": o, "durum": "Bekliyor"})
+                    bulut_patch(f"users/{sec}", {"ozel_gorevler": liste})
+                    konu = (bulut_get(f"users/{sec}/bildirim") or {}).get("konu")
+                    if konu:
+                        ntfy_gonder(konu, "🎯 Arda sana yeni görev verdi", f"{g}" + (f"  •  🎁 {o}" if o else ""), 4)
+                    snack(f"✅ Görev {sec} kişisine gönderildi")
+                except Exception as ex:
+                    snack(f"⚠️ Gönderilemedi: {ex}")
+            arka_plan(is_)
 
-        # --- Veri ---
-        veri_ogeleri = [bolum_basligi(r, ft.icons.INSIGHTS, "Performans ve Günlük")]
-        if DB["gunluk"]:
-            veri_ogeleri.append(ft.Text("Son 7 gün (saat)", color=r["muted"], size=12))
-            veri_ogeleri.append(haftalik_bar(r))
-            veri_ogeleri.append(ft.Divider(color=r["border"]))
-            for k in reversed(DB["gunluk"]):
-                p = int(k.get("performans", 0) or 0)
-                emoji = PERFORMANS[p - 1][0] if 1 <= p <= 5 else "📝"
-                saat_txt = sn_metni(k["sn"]) if "sn" in k else f"{sayi(k.get('saat')):g} sa"
-                govde = [
-                    ft.Row([ft.Text(k["tarih"], size=12, color=r["hdr"], weight=ft.FontWeight.BOLD, expand=True), ft.Text(emoji, size=20)]),
-                    ft.Text(f"{k.get('baslama', '-')} → {k.get('bitis', '-')}  |  {saat_txt}", size=12, color=r["muted"]),
-                ]
-                if k.get("gunluk"):
-                    govde.append(ft.Text(k["gunluk"], color=r["txt"], size=13))
-                veri_ogeleri.append(ft.Container(
-                    padding=12, border_radius=12, bgcolor=r["bg"], border=ft.border.all(1, r["border"]),
-                    content=ft.Column(govde, spacing=4)))
-        else:
-            veri_ogeleri.append(ft.Text("Henüz gün sonu verisi girilmemiş.", color=r["muted"], italic=True))
-        veri_tab = [kart(r, ft.Column(veri_ogeleri, spacing=10))]
-
-        # --- Ayar ---
-        onay_in = girdi(r, label="Silmek için büyük harfle SİL yaz")
-
-        def sifirla(e):
-            if (onay_in.value or "") == "SİL":
-                for anahtar in ("su", "todo", "gunluk", "konu_bitti", "netler", "ozel_gorevler", "calisma_sn", "calisma_log", "gun"):
-                    DB[anahtar] = copy.deepcopy(VARSAYILAN_VERI[anahtar])
-                    kaydet(anahtar)
-                zm.update({"durum": "bos", "birikmis": 0.0, "t0": None})
-                snack("Tüm veriler sıfırlandı.")
-                kutlama()
-                yenile()
-            else:
-                snack("Onaylamak için kutucuğa tam olarak SİL yazmalısın.")
-
-        ayar_tab = [kart(r, ft.Column([
-            ft.Text("⚠️ Tehlikeli Bölge", size=16, weight=ft.FontWeight.BOLD, color=ft.colors.RED_400),
-            ft.Text("Bu işlem geri alınamaz! Su, görev, konu, net, gün sonu ve çalışma verileri silinir. (Hesap ve tema silinmez.)",
-                    color=r["txt"], size=13),
-            onay_in,
-            ft.ElevatedButton("Her Şeyi Sil 🔴", on_click=sifirla, bgcolor=ft.colors.RED_400, color="#FFFFFF", height=46,
-                              style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=14))),
-        ], spacing=12))]
+        mevcut = listeye((users.get(sec) or {}).get("ozel_gorevler")) if sec else []
+        gorev_liste = [ft.Text(f"{'✅' if g.get('durum') == 'Tamamlandı' else '⏳'} {g.get('gorev')} → {g.get('odul')}",
+                               size=12, color=r["muted"]) for g in mevcut]
+        sekme2 = [kart(r, ft.Column([
+            bolum_basligi(r, ik("ASSIGNMENT"), "Özel Görev Tanımla"),
+            gorev_in, odul_in, buton(r, "Gönder", gorev_ver, genis=True), *gorev_liste,
+        ], spacing=10))]
 
         def degisti(i):
             ui["panel_tab"] = i
             yenile()
-        sekmeler = [sinyal_tab, gorev_tab, veri_tab, ayar_tab]
-        return ft.Column([
-            segment(r, ["🚨 Sinyal", "📝 Görev", "📈 Veri", "⚙️ Ayar"], ui["panel_tab"], degisti),
-            *sekmeler[ui["panel_tab"]],
-            ft.Container(height=24),
-        ], scroll=ft.ScrollMode.AUTO, expand=True, spacing=14)
+
+        sekmeler = [sekme0, sekme1, sekme2]
+        ust = [segment(r, ["📈 Öğrenciler", "🔔 Gönder", "📝 Görev"], ui["panel_tab"], degisti)]
+        if ui["panel_tab"] != 0:
+            ust.append(ciplar if isimler else ft.Text("Henüz kayıtlı öğrenci yok.", color=r["muted"], italic=True))
+        return ft.Column([*ust, *sekmeler[ui["panel_tab"]], ft.Container(height=24)],
+                         scroll=ft.ScrollMode.AUTO, expand=True, spacing=14)
 
     # ==========================================
     # 14. GÖRÜNÜM (TEMA)
@@ -1771,14 +2085,14 @@ def main(page: ft.Page):
             secili = ad == DB["tema"]
             kartlar.append(ft.Container(
                 padding=14, border_radius=18, ink=True, on_click=lambda e, a=ad: tema_uygula(a),
-                bgcolor=r["card_bg"], border=ft.border.all(2 if secili else 1, r["hdr"] if secili else r["border"]),
+                bgcolor=r["card_bg"], border=kenar(2 if secili else 1, r["hdr"] if secili else r["border"]),
                 content=ft.Row([
                     ft.Stack([
-                        ft.Container(width=40, height=40, border_radius=20, bgcolor=t["bg"], border=ft.border.all(1, t["border"])),
+                        ft.Container(width=40, height=40, border_radius=20, bgcolor=t["bg"], border=kenar(1, t["border"])),
                         ft.Container(width=22, height=22, border_radius=11, bgcolor=t["hdr"], left=9, top=9),
                     ], width=40, height=40),
                     ft.Text(ad, size=15, weight=ft.FontWeight.W_700, color=r["txt"], expand=True),
-                    ft.Icon(ft.icons.CHECK_CIRCLE if secili else ft.icons.CIRCLE_OUTLINED,
+                    ft.Icon(ik("CHECK_CIRCLE") if secili else ik("CIRCLE_OUTLINED"),
                             color=r["hdr"] if secili else r["muted"]),
                 ], spacing=14),
             ))
@@ -1788,26 +2102,87 @@ def main(page: ft.Page):
         ], scroll=ft.ScrollMode.AUTO, expand=True, spacing=10)
 
     # ==========================================
+    # 14b. BİLDİRİMLER
+    # ==========================================
+    def bildirim_sayfasi_olustur(r):
+        bildirim_konu_hazirla()
+        b = DB["bildirim"]
+        konu = b.get("konu", "")
+        host = NTFY_SUNUCU.split("//")[-1]
+
+        def anahtar_degis(anahtar):
+            def f(e):
+                b[anahtar] = bool(e.control.value)
+                kaydet("bildirim")
+            return f
+
+        def satir(etiket, aciklama, anahtar):
+            return ft.Row([
+                ft.Column([ft.Text(etiket, size=14, weight=ft.FontWeight.W_700, color=r["txt"]),
+                           ft.Text(aciklama, size=12, color=r["muted"])], spacing=2, expand=True),
+                ft.Switch(value=bool(b.get(anahtar, True)), active_color=r["hdr"], on_change=anahtar_degis(anahtar)),
+            ], vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+        saatler = [9, 10, 11, 12]
+        try:
+            secili = saatler.index(int(b.get("baslama", 11)))
+        except (ValueError, TypeError):
+            secili = 2
+
+        def saat_sec(i):
+            b["baslama"] = saatler[i]
+            kaydet("bildirim")
+            yenile()
+
+        def test(e):
+            def is_():
+                ok, hata = ntfy_gonder(konu, "🔔 Test bildirimi", f"Merhaba {kullanici_adi()}! Bildirimler çalışıyor 🎉", 3)
+                snack("✅ Test bildirimi gönderildi, telefonuna bak!" if ok else f"⚠️ Gitmedi: {hata}")
+            arka_plan(is_)
+
+        kurulum = kart(r, ft.Column([
+            bolum_basligi(r, ik("NOTIFICATIONS_ACTIVE"), "Telefon bildirimini kur (1 kere)"),
+            ft.Text("1) Play Store / App Store'dan ücretsiz “ntfy” uygulamasını kur.\n"
+                    "2) Aşağıdaki düğmeye bas (ya da ntfy'de + ile şu konuya abone ol).\n"
+                    "3) Test bildirimi gönder. Uygulama kapalıyken de bildirim gelir.",
+                    size=13, color=r["txt"]),
+            ft.Container(padding=12, border_radius=12, bgcolor=r["bg"], border=kenar(1, r["border"]),
+                         content=ft.Text(konu or "…", selectable=True, size=13, weight=ft.FontWeight.W_700, color=r["hdr"])),
+            buton(r, "ntfy uygulamasında abone ol", lambda e: url_ac(f"ntfy://{host}/{konu}"), genis=True),
+            buton(r, "Test bildirimi gönder 🔔", test, genis=True, ikincil=True),
+        ], spacing=10))
+
+        ayarlar = kart(r, ft.Column([
+            bolum_basligi(r, ik("EDIT_NOTE"), "Hangi bildirimler gelsin?"),
+            satir("Tüm bildirimler", "Kapatırsan hiçbiri gelmez", "aktif"),
+            satir("☀️ Sabah planı", "Günün ilk görevini hatırlatır", "sabah"),
+            satir("💧 Su hatırlatma", "Geride kalırsan gün içinde dürter", "su"),
+            satir("⏰ Derse başla", "Hedef saatte hâlâ başlamadıysan kızar 😠", "ders"),
+            satir("🌙 Gün sonu", "Gün sonunu doldurmayı hatırlatır", "gunsonu"),
+            ft.Text("Derse başlama hedef saati", size=13, color=r["muted"]),
+            segment(r, [f"{h}:00" for h in saatler], secili, saat_sec),
+        ], spacing=12))
+        not_ = ft.Text("Hatırlatmalar sunucudan gönderilir; zamanlama birkaç dakika sapabilir.", size=12, color=r["muted"])
+        return ft.Column([kurulum, ayarlar, not_, ft.Container(height=24)], scroll=ft.ScrollMode.AUTO, expand=True, spacing=14)
+
+    # ==========================================
     # 15. DİĞER MENÜSÜ
     # ==========================================
     ALT_SAYFALAR = {
-        "gunsonu": (ft.icons.NIGHTLIGHT_ROUND, "Gün Sonu", "Süre, performans ve günlük kayıtların", gun_sonu_sayfasi_olustur),
-        "asistan": (ft.icons.SMART_TOY, "Asistan", "Sorularına Arda'dan cevap", asistan_sayfasi_olustur),
-        "eglence": (ft.icons.SPORTS_ESPORTS, "Eğlence & Mola", "XOX ve YouTube kısayolları", eglence_sayfasi_olustur),
-        "muzik": (ft.icons.HEADPHONES, "Odak Müzik", "Spotify ve odak sesleri", muzik_sayfasi_olustur),
-        "tema": (ft.icons.PALETTE, "Görünüm", "Tema seç", tema_sayfasi_olustur),
-        "panel": (ft.icons.ADMIN_PANEL_SETTINGS, "Arda'nın Paneli", "Sinyal, görev ve veriler", panel_sayfasi_olustur),
+        "gunsonu": (ik("NIGHTLIGHT_ROUND"), "Gün Sonu", "Süre, performans ve günlük kayıtların", gun_sonu_sayfasi_olustur),
+        "bildirim": (ik("NOTIFICATIONS_ACTIVE"), "Bildirimler", "Su, ders ve gün sonu hatırlatmaları", bildirim_sayfasi_olustur),
+        "asistan": (ik("SMART_TOY"), "Asistan", "Sorularına Arda'dan cevap", asistan_sayfasi_olustur),
+        "eglence": (ik("SPORTS_ESPORTS"), "Eğlence & Mola", "XOX ve YouTube kısayolları", eglence_sayfasi_olustur),
+        "muzik": (ik("HEADPHONES"), "Odak Müzik", "Spotify ve odak sesleri", muzik_sayfasi_olustur),
+        "tema": (ik("PALETTE"), "Görünüm", "Tema seç", tema_sayfasi_olustur),
+        "panel": (ik("ADMIN_PANEL_SETTINGS"), "Arda'nın Paneli", "Canlı öğrenci verileri, bildirim ve görev", panel_sayfasi_olustur),
     }
 
     def cikis_yap(e):
-        # çıkmadan önce bekleyen değişiklikleri buluta göndermeyi dene
-        with kilit:
-            bulut["bekleyen"].update(BULUT_ANAHTARLARI if not oturum["senkron"] else [])
-        bulut_gonder()
+        bulut_gonder()          # çıkmadan önce bekleyen değişiklikleri buluta göndermeyi dene
         with kilit:
             oturum["kullanici"] = ""
-            oturum["senkron"] = True
-            bulut["bekleyen"].clear()
+            oturum["kirli"] = {}
             tema = DB["tema"]
             DB.clear()
             DB.update(db_hazirla({"tema": tema}))
@@ -1830,22 +2205,22 @@ def main(page: ft.Page):
                 return ft.Container(
                     padding=14, border_radius=20, ink=True, on_click=tikla,
                     bgcolor=r["hdr"] if vurgulu else r["card_bg"],
-                    border=ft.border.all(1, r["hdr"] if vurgulu else r["border"]),
+                    border=kenar(1, r["hdr"] if vurgulu else r["border"]),
                     content=ft.Row([
-                        ft.Container(width=44, height=44, border_radius=14, alignment=ft.alignment.center,
-                                     bgcolor=ft.colors.with_opacity(0.22, on) if vurgulu else ft.colors.with_opacity(0.14, r["hdr"]),
+                        ft.Container(width=44, height=44, border_radius=14, alignment=ORTA,
+                                     bgcolor=opak(0.22, on) if vurgulu else opak(0.14, r["hdr"]),
                                      content=ft.Icon(ikon, color=on if vurgulu else r["hdr"])),
                         ft.Column([
                             ft.Text(ad, size=15, weight=ft.FontWeight.W_700, color=on if vurgulu else r["txt"]),
-                            ft.Text(aciklama, size=12, color=ft.colors.with_opacity(0.85, on) if vurgulu else r["muted"]),
+                            ft.Text(aciklama, size=12, color=opak(0.85, on) if vurgulu else r["muted"]),
                         ], spacing=2, expand=True),
-                        ft.Icon(ft.icons.CHEVRON_RIGHT, color=on if vurgulu else r["muted"]),
+                        ft.Icon(ik("CHEVRON_RIGHT"), color=on if vurgulu else r["muted"]),
                     ], spacing=14),
                 )
 
             satirlar = [satir(k, ikon, ad, ac_, ac(k), vurgulu=(k == "gunsonu"))
                         for k, (ikon, ad, ac_, _) in ALT_SAYFALAR.items()]
-            satirlar.append(satir("cikis", ft.icons.LOGOUT, "Çıkış Yap",
+            satirlar.append(satir("cikis", ik("LOGOUT"), "Çıkış Yap",
                                   f"{kullanici_adi()} hesabından çık", cikis_yap))
             return ft.Column([
                 sayfa_basligi(r, "Daha Fazla"),
@@ -1870,25 +2245,29 @@ def main(page: ft.Page):
     # ==========================================
     def giris_ekrani_olustur(r):
         mod = ui["giris_mod"]
-        hata = ft.Text(ui["hata"], color=ft.colors.RED_400, size=13)
-        kullanici = girdi(r, label="Kullanıcı adı (Boşluksuz)", prefix_icon=ft.icons.PERSON)
-        sifre = girdi(r, label="Şifre", password=True, can_reveal_password=True, prefix_icon=ft.icons.LOCK)
+        hata = ft.Text(ui["hata"], color=KIRMIZI, size=13)
+        kullanici = girdi(r, label="Kullanıcı adı (Boşluksuz)", prefix_icon=ik("PERSON"), value=ui["taslak"])
+        sifre = girdi(r, label="Şifre", password=True, can_reveal_password=True, prefix_icon=ik("LOCK"))
+        sifre2 = girdi(r, label="Şifre (tekrar)", password=True, can_reveal_password=True, prefix_icon=ik("LOCK_OUTLINE"))
         
         def hata_goster(m): 
             ui["hata"] = m
+            ui["taslak"] = kullanici.value or ""
             giris_ac()
 
-        def oturum_ac(ad, veri):
+        def oturum_ac(ad, veri, yeni_hesap=False):
             with kilit:
                 DB.clear()
                 DB.update(veri)
                 oturum["kullanici"] = ad
-                oturum["senkron"] = False
-                bulut["bekleyen"].update(BULUT_ANAHTARLARI)
+                oturum["kirli"] = {k: 1 for k in BULUT_ANAHTARLARI} if yeni_hesap else {}
+                oturum["surum"] = 1 if yeni_hesap else 0
                 yerel_yaz()
-            bulut["olay"].set()
+            if yeni_hesap:
+                bulut_olay.set()
             ui["hata"] = ""
-            tema_uygula(DB["tema"])
+            ui["taslak"] = ""
+            tema_uygula(DB["tema"], kaydetme=False)
             uygulama_ac()
 
         def kayit_ol(e):
@@ -1897,6 +2276,8 @@ def main(page: ft.Page):
                 return hata_goster("Kullanıcı adı en az 3 karakter olmalı; sadece harf, rakam ve _ kullan.")
             if len(sifre.value or "") < 4:
                 return hata_goster("Şifre en az 4 karakter olmalı.")
+            if (sifre.value or "") != (sifre2.value or ""):
+                return hata_goster("Şifreler aynı değil, ikisini de aynı yaz.")
             try:
                 if bulut_oku(ad) is not None:
                     return hata_goster("Bu kullanıcı adı alınmış!")
@@ -1905,7 +2286,7 @@ def main(page: ft.Page):
             tuz = os.urandom(8).hex()
             yeni_db = db_hazirla({"tema": DB["tema"]})
             yeni_db["hesap"] = {"kullanici": ad, "tuz": tuz, "ozet": sifre_ozeti(sifre.value, tuz)}
-            oturum_ac(ad, yeni_db)
+            oturum_ac(ad, yeni_db, yeni_hesap=True)
 
         def giris_yap(e):
             ad = (kullanici.value or "").strip().lower()
@@ -1924,17 +2305,18 @@ def main(page: ft.Page):
             oturum_ac(ad, veri)
 
         if mod == "kayit":
-            form = [kullanici, sifre, hata, buton(r, "Bulutta Hesap Oluştur", kayit_ol, genis=True, yukseklik=52), ft.TextButton("Zaten hesabım var", on_click=lambda e: (ui.update({"giris_mod": "giris", "hata": ""}), giris_ac()))]
+            sifre2.on_submit = kayit_ol
+            form = [kullanici, sifre, sifre2, hata, buton(r, "Bulutta Hesap Oluştur", kayit_ol, genis=True, yukseklik=52), metin_dugmesi("Zaten hesabım var", on_click=lambda e: (ui.update({"giris_mod": "giris", "hata": "", "taslak": ""}), giris_ac()))]
         else:
-            form = [kullanici, sifre, hata, buton(r, "Giriş Yap", giris_yap, genis=True, yukseklik=52), ft.TextButton("Yeni hesap aç", on_click=lambda e: (ui.update({"giris_mod": "kayit", "hata": ""}), giris_ac()))]
+            form = [kullanici, sifre, hata, buton(r, "Giriş Yap", giris_yap, genis=True, yukseklik=52), metin_dugmesi("Yeni hesap aç", on_click=lambda e: (ui.update({"giris_mod": "kayit", "hata": "", "taslak": ""}), giris_ac()))]
 
-        logo = ft.Container(width=88, height=88, border_radius=28, alignment=ft.alignment.center, gradient=ft.LinearGradient(begin=ft.alignment.top_left, end=ft.alignment.bottom_right, colors=[karistir(r["hdr"], "#000000", 0.1), karistir(r["hdr"], "#000000", 0.5)]), content=ft.Text("🚀", size=44))
+        logo = ft.Container(width=88, height=88, border_radius=28, alignment=ORTA, gradient=ft.LinearGradient(begin=UST_SOL, end=ALT_SAG, colors=[karistir(r["hdr"], "#000000", 0.1), karistir(r["hdr"], "#000000", 0.5)]), content=ft.Text("🚀", size=44))
         return ft.Column([ft.Container(height=30), ft.Row([logo], alignment=ft.MainAxisAlignment.CENTER), ft.Text("YKS İstasyonu (Bulut)", size=28, weight=ft.FontWeight.W_800, color=r["txt"], text_align=ft.TextAlign.CENTER), kart(r, ft.Column(form, spacing=12))], scroll=ft.ScrollMode.AUTO, expand=True, spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
 
     # ==========================================
     # 17. ANA İSKELET, NAVİGASYON, TEMA
     # ==========================================
-    kok = ft.Container(expand=True, padding=ft.padding.only(left=16, right=16, top=10, bottom=0))
+    kok = ft.Container(expand=True, padding=pad_only(left=16, right=16, top=10, bottom=0))
     ui_kapsayici = ft.Container(expand=True)
 
     def icerik_guncelle(r):
@@ -1961,11 +2343,11 @@ def main(page: ft.Page):
     page.navigation_bar = ft.NavigationBar(
         selected_index=0, on_change=nav_degisti, height=68,
         destinations=[
-            ft.NavigationBarDestination(icon=ft.icons.HOME_OUTLINED, selected_icon=ft.icons.HOME, label="Ana Sayfa"),
-            ft.NavigationBarDestination(icon=ft.icons.TIMER_OUTLINED, selected_icon=ft.icons.TIMER, label="Çalış"),
-            ft.NavigationBarDestination(icon=ft.icons.SHOW_CHART_OUTLINED, selected_icon=ft.icons.SHOW_CHART, label="Netler"),
-            ft.NavigationBarDestination(icon=ft.icons.CALENDAR_MONTH_OUTLINED, selected_icon=ft.icons.CALENDAR_MONTH, label="Plan"),
-            ft.NavigationBarDestination(icon=ft.icons.GRID_VIEW_OUTLINED, selected_icon=ft.icons.GRID_VIEW, label="Daha Fazla"),
+            ft.NavigationBarDestination(icon=ik("HOME_OUTLINED"), selected_icon=ik("HOME"), label="Ana Sayfa"),
+            ft.NavigationBarDestination(icon=ik("TIMER_OUTLINED"), selected_icon=ik("TIMER"), label="Çalış"),
+            ft.NavigationBarDestination(icon=ik("SHOW_CHART_OUTLINED"), selected_icon=ik("SHOW_CHART"), label="Netler"),
+            ft.NavigationBarDestination(icon=ik("CALENDAR_MONTH_OUTLINED"), selected_icon=ik("CALENDAR_MONTH"), label="Plan"),
+            ft.NavigationBarDestination(icon=ik("GRID_VIEW_OUTLINED"), selected_icon=ik("GRID_VIEW"), label="Daha Fazla"),
         ],
     )
 
@@ -1979,54 +2361,135 @@ def main(page: ft.Page):
         ui["alt"] = None
         page.navigation_bar.selected_index = 0
         page.navigation_bar.visible = True
+        bildirim_konu_hazirla()
         icerik_guncelle(renk())
         kok.content = ui_kapsayici
         page.update()
 
-    def tema_uygula(isim):
+    def tema_uygula(isim, kaydetme=True):
         DB["tema"] = isim
-        kaydet("tema")
+        if kaydetme:
+            kaydet("tema")
         r = TEMA_RENKLERI[isim]
         page.bgcolor = r["bg"]
         page.theme_mode = r["mode"]
         page.theme = ft.Theme(color_scheme_seed=r["hdr"])
         page.dark_theme = ft.Theme(color_scheme_seed=r["hdr"])
         page.navigation_bar.bgcolor = r["card_bg"]
-        page.navigation_bar.indicator_color = ft.colors.with_opacity(0.25, r["hdr"])
+        page.navigation_bar.indicator_color = opak(0.25, r["hdr"])
         if kok.content is ui_kapsayici:
             icerik_guncelle(r)
         elif kok.content is not None:
             kok.content = duzelt(giris_ekrani_olustur(r))
         page.update()
 
+    # ---------- arka plan döngüleri ----------
+    def geri_sayim_dongusu():
+        """Ana sayfadaki YKS geri sayımını her saniye yeniler."""
+        while True:
+            time.sleep(1)
+            try:
+                if kok.content is not ui_kapsayici or ui["sekme"] != 0 or not gk["metinler"]:
+                    continue
+                toplam = int((YKS_TARIHI - datetime.now()).total_seconds())
+                if toplam <= 0:
+                    continue
+                for t, d in zip(gk["metinler"], (toplam // 86400, (toplam % 86400) // 3600, (toplam % 3600) // 60, toplam % 60)):
+                    t.value = str(d)
+                    t.update()
+            except Exception:
+                pass
+
+    def bulut_cek_dongusu():
+        """Öğrenci tarafı: yöneticiden gelen sinyal ve özel görevleri 15 sn'de bir buluttan alır."""
+        while True:
+            time.sleep(15)
+            kul = oturum["kullanici"]
+            if not kul or oturum["kirli"]:
+                continue
+            try:
+                sg = bulut_get(f"users/{kul}/sinyal") or {}
+                gorev = listeye(bulut_get(f"users/{kul}/ozel_gorevler"))
+            except Exception:
+                continue
+            sinyal = {"aktif": bool(sg.get("aktif")), "mesaj": sg.get("mesaj", "")}
+            if sinyal == DB["sinyal"] and gorev == DB["ozel_gorevler"]:
+                continue
+            yeni_sinyal = bool(sinyal["aktif"] and sinyal["mesaj"] and sinyal != DB["sinyal"])
+            with kilit:
+                if oturum["kirli"]:
+                    continue
+                DB["sinyal"] = sinyal
+                DB["ozel_gorevler"] = gorev
+                yerel_yaz()
+            try:
+                if kok.content is ui_kapsayici and ui["sekme"] == 0 and ui["alt"] is None:
+                    yenile()
+                if yeni_sinyal:
+                    snack(f"🚨 Arda: {sinyal['mesaj']}")
+            except Exception:
+                pass
+
+    def panel_izle():
+        """Yönetici tarafı: panel açıkken öğrenci verilerini 4 sn'de bir yeniler, yeni kayıtta haber verir."""
+        while True:
+            time.sleep(4)
+            try:
+                if not (kok.content is ui_kapsayici and ui["sekme"] == 4 and ui["alt"] == "panel"
+                        and ui["panel_giris"] and ui["panel_tab"] == 0 and panel["kap"] is not None):
+                    continue
+                users = bulut_oku() or {}
+                yeni = imza_hesapla(users)
+                for u, (g_, n_) in yeni.items():
+                    og, on = panel["imza"].get(u, (g_, n_))
+                    if g_ > og:
+                        snack(f"🔔 {u} gün sonunu kaydetti!")
+                    if n_ > on:
+                        snack(f"🔔 {u} yeni deneme ekledi!")
+                panel["imza"] = yeni
+                panel["veri"] = users
+                panel["kap"].controls = ogrenci_kartlari(renk(), users) or \
+                    [ft.Text("Henüz kayıtlı öğrenci yok.", color=renk()["muted"], italic=True)]
+                panel["kap"].update()
+            except Exception:
+                pass
+
+    def buluttan_esitle():
+        """Açılışta: gönderilmemiş değişikliği yolla, sonra buluttaki güncel veriyi al."""
+        kul = oturum["kullanici"]
+        if not kul:
+            return
+        try:
+            if oturum["kirli"] and not bulut_gonder():
+                return
+            ham = bulut_oku(kul)
+            if ham is None:
+                return
+            yeni = db_hazirla(ham)
+            with kilit:
+                if oturum["kirli"]:
+                    return              # bu arada yeni değişiklik olduysa üzerine yazma
+                DB.clear()
+                DB.update(yeni)
+                yerel_yaz()
+            tema_uygula(DB["tema"], kaydetme=False)
+            bildirim_konu_hazirla()
+        except Exception as ex:
+            print("Bulut eşitleme hatası:", ex)
+
     page.add(ft.SafeArea(content=kok, expand=True))
-    tema_uygula(DB["tema"])
+    tema_uygula(DB["tema"], kaydetme=False)
+    arka_plan(geri_sayim_dongusu)
+    arka_plan(bulut_cek_dongusu)
+    arka_plan(panel_izle)
     if oturum["kullanici"] and DB["hesap"]:
         uygulama_ac()
-
-        def buluttan_esitle():
-            """Açılışta: telefonda gönderilmemiş değişiklik varsa buluta yolla, yoksa buluttaki güncel veriyi al."""
-            try:
-                if not oturum["senkron"]:
-                    with kilit:
-                        bulut["bekleyen"].update(BULUT_ANAHTARLARI)
-                    bulut_gonder()
-                    return
-                ham = bulut_oku(oturum["kullanici"])
-                if ham is None:
-                    return
-                yeni = db_hazirla(ham)
-                with kilit:
-                    DB.clear()
-                    DB.update(yeni)
-                    yerel_yaz()
-                tema_uygula(DB["tema"])
-            except Exception as ex:
-                print("Bulut eşitleme hatası:", ex)
-
-        threading.Thread(target=buluttan_esitle, daemon=True).start()
+        arka_plan(buluttan_esitle)
     else:
         giris_ac()
 
 
-ft.run(main)
+if hasattr(ft, "run"):
+    ft.run(main)
+else:
+    ft.app(target=main)
