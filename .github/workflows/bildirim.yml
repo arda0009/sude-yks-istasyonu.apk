@@ -1,0 +1,20 @@
+name: Bildirim Botu
+
+on:
+  schedule:
+    - cron: "*/15 5-20 * * *"   # UTC 05-20 = Türkiye saati 08:00-23:59, 15 dakikada bir
+  workflow_dispatch:             # Actions sekmesinden elle de çalıştırılabilir
+
+jobs:
+  bildir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests tzdata
+      - run: python bildirim_botu.py
+        env:
+          FIREBASE_URL: ${{ secrets.FIREBASE_URL }}
