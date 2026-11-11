@@ -1,180 +1,297 @@
-"""YKS Asistanım - bildirim botu.
-
-GitHub Actions bunu 15 dakikada bir çalıştırır. Firebase'deki öğrenci verilerine bakar,
-uygun bir hatırlatma varsa ntfy üzerinden öğrencinin telefonuna GERÇEK bildirim yollar
-(uygulama kapalıyken de gelir). Aynı bildirim aynı gün ikinci kez gönderilmez.
-"""
 import os
-import sys
 import random
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
-import requests
+try:
+    import requests
+except ImportError:
+    requests = None
 
-FIREBASE_URL = (os.environ.get("FIREBASE_URL") or "https://yks-istasyonu-default-rtdb.firebaseio.com").rstrip("/")
-NTFY_SUNUCU = (os.environ.get("NTFY_SUNUCU") or "https://ntfy.sh").rstrip("/")
-KURU_CALISTIR = os.environ.get("KURU_CALISTIR") == "1"      # 1 ise bildirim göndermez, sadece yazdırır
-TZ = ZoneInfo("Europe/Istanbul")
-PENCERE = 60            # dakika: cron geciksede planlanan saati yakalasın
-
-GUNLER = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
-VARSAYILAN = {"aktif": True, "baslama": 11, "su": True, "ders": True, "gunsonu": True, "sabah": True}
-
-# ---- mesaj havuzları: her seferinde rastgele biri seçilir ----
-SABAH = [
-    "Günaydın {ad}! ☀️ Bugünün ilk görevi: {gorev}",
-    "Yeni gün, yeni fırsat {ad}! 🌅 Sırada: {gorev}",
-    "Kahveni al, hazırlan! ☕ Bugün seni bekleyen ilk iş: {gorev}",
-]
-SABAH_GOREVSIZ = ["Günaydın {ad}! ☀️ Bugün için planın boş, kendi hedefini belirle 💪"]
-SU = [
-    ("💧 Su içmeyi unutma!", "Bugün sadece {n} bardak içtin. Hadi bir bardak daha! 🚰"),
-    ("🥤 Bir bardak su vakti", "Beynin su ister {ad}! Şimdiye kadar {n} bardak içtin 💧"),
-    ("💦 Susadın mı?", "{n} bardakta kaldın. Ders çalışırken su içmek odağı artırır 🧠"),
-]
-DERS = [   # derse başlama hatırlatmaları, sırayla sertleşir sonra yumuşar
-    [("⏰ Saat {h}'i geçti!", "Hâlâ derse başlamadın. Ne zaman başlamayı düşünüyorsun? 😠"),
-     ("⏰ {h}:00 oldu bile", "Kronometre hâlâ kapalı {ad}… 🤨 Başlıyoruz!")],
-    [("😡 Hâlâ ses yok!", "Bir 25 dakikalık pomodoro bile yeter, başla artık!"),
-     ("😤 Neredesin {ad}?", "Çalışma masası seni bekliyor. Sadece 25 dakika, söz!")],
-    [("😤 Gün yarılandı!", "Bugün çalışma süren hâlâ sıfır. Şimdi başla, akşam kendine teşekkür edeceksin."),
-     ("🙄 Bu kadar mı?", "Kendine verdiğin sözü hatırla. Bir oturum başlat!")],
-    [("🥺 Endişelenmeye başladım", "Bugün kısa da olsa bir oturum yapalım mı {ad}? Yarın için de güzel olur ❤️")],
-]
-GUNSONU = [
-    ("🌙 Gün sonunu doldurmayı unutma!", "Bugün kaç saat çalıştığın ve nasıl hissettiğin kayda geçsin 📝"),
-    ("😴 Uyumadan önce son iş", "Gün sonu kaydın eksik {ad}. 1 dakikanı alır! 🌙"),
-]
-OVGU = {
-    "yuksek": [("🏆 Efsane bir gün!", "Bugün {s} çalıştın {ad}, seninle gurur duyuyorum! 🎉")],
-    "orta": [("👏 Güzel çalışma", "Bugün {s} çalıştın. İstikrar böyle kazanılır 💪")],
-    "dusuk": [("💙 Yarın daha iyi olacak", "Bugün {s} çalıştın. Dinlen, yarın yeniden başlarız!")],
-}
+FIREBASE_URL = os.environ.get("FIREBASE_URL", "https://yks-istasyonu-default-rtdb.firebaseio.com").rstrip("/")
+NTFY_SUNUCU = os.environ.get("NTFY_SUNUCU", "https://ntfy.sh").rstrip("/")
+ISTANBUL_TZ = timezone(timedelta(hours=3))
 
 
-def listeye(x):
-    if isinstance(x, dict):
-        try:
-            x = [x[k] for k in sorted(x, key=lambda i: int(i))]
-        except (ValueError, TypeError):
-            x = list(x.values())
-    return [i for i in x if i is not None] if isinstance(x, list) else []
+def istanbul_simdi(ts=None):
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            return ts.replace(tzinfo=ISTANBUL_TZ)
+        return ts.astimezone(ISTANBUL_TZ)
+    if ts is None:
+        return datetime.now(ISTANBUL_TZ)
+    return datetime.fromtimestamp(float(ts), tz=ISTANBUL_TZ)
 
 
-def sayi(v, varsayilan=0.0):
+def istanbul_bugun(ts=None):
+    return istanbul_simdi(ts).strftime("%Y-%m-%d")
+
+
+def onceki_gun_str(gun_str):
     try:
-        return float(str(v).replace(",", "."))
-    except (ValueError, TypeError):
-        return varsayilan
+        d = datetime.strptime(gun_str, "%Y-%m-%d").date()
+        return (d - timedelta(days=1)).strftime("%Y-%m-%d")
+    except Exception:
+        return ""
 
 
-def sn_metni(sn):
-    sn = int(sn)
-    return f"{sn // 3600} sa {(sn % 3600) // 60} dk" if sn >= 3600 else f"{sn // 60} dk"
+def cift_id(u1, u2):
+    a, b = sorted([str(u1).strip().lower(), str(u2).strip().lower()])
+    return f"{a}__{b}"
 
 
-def degerlendir(ad, veri, simdi, rastgele=random):
-    """Bu an gönderilmesi gereken bildirimleri döndürür: [(id, baslik, mesaj, oncelik), ...]"""
-    ayar = dict(VARSAYILAN)
-    ayar.update(veri.get("bildirim") or {})
-    if not ayar.get("aktif") or not ayar.get("konu"):
-        return []
-    dk = simdi.hour * 60 + simdi.minute
-    if dk < 8 * 60 + 30 or dk > 23 * 60 + 30:
-        return []
-    bugun = simdi.strftime("%d.%m.%Y")
-    gun_adi = GUNLER[simdi.weekday()]
-    gun_bilgi = veri.get("gun") or {}
-    derse_basladi = gun_bilgi.get("tarih") == bugun
-    gunluk_bugun = [g for g in listeye(veri.get("gunluk")) if isinstance(g, dict) and g.get("tarih") == bugun]
-    sonuc = []
-
-    def yakala(baslangic, pencere=PENCERE):
-        return baslangic <= dk < baslangic + pencere
-
-    # sabah planı
-    if ayar.get("sabah") and yakala(8 * 60 + 30, 90):
-        plan = (veri.get("plan") or {}).get(gun_adi)
-        bekleyen = [t for t in listeye(plan) if isinstance(t, dict) and not t.get("bitti")]
-        if bekleyen:
-            sonuc.append(("sabah", "☀️ Günaydın!", rastgele.choice(SABAH).format(ad=ad, gorev=bekleyen[0].get("gorev", "")), 3))
-        else:
-            sonuc.append(("sabah", "☀️ Günaydın!", rastgele.choice(SABAH_GOREVSIZ).format(ad=ad), 3))
-
-    # su hatırlatma: (saat, o saate kadar içilmesi gereken bardak)
-    if ayar.get("su"):
-        su = veri.get("su") or {}
-        bardak = int(sayi(su.get("bardak"))) if su.get("tarih") == bugun else 0
-        for i, (saat_dk, beklenen) in enumerate([(10 * 60, 1), (12 * 60 + 30, 3), (15 * 60, 5), (17 * 60 + 30, 6), (20 * 60, 8)]):
-            if yakala(saat_dk) and bardak < beklenen:
-                b, m = rastgele.choice(SU)
-                sonuc.append((f"su{i}", b.format(n=bardak, ad=ad), m.format(n=bardak, ad=ad), 3))
-
-    # derse başlamadı
-    if ayar.get("ders") and not derse_basladi:
-        h = int(sayi(ayar.get("baslama"), 11))
-        for i, ek in enumerate([0, 90, 180, 300]):
-            if yakala(h * 60 + ek):
-                b, m = rastgele.choice(DERS[i])
-                sonuc.append((f"ders{i}", b.format(h=h, ad=ad), m.format(h=h, ad=ad), 4 if i < 3 else 3))
-
-    # gün sonu
-    if ayar.get("gunsonu") and not gunluk_bugun:
-        for i, saat_dk in enumerate([22 * 60, 23 * 60 + 15]):
-            if yakala(saat_dk, 45):
-                b, m = rastgele.choice(GUNSONU)
-                sonuc.append((f"gs{i}", b.format(ad=ad), m.format(ad=ad), 3))
-
-    # övgü: gün sonu kaydedildikten sonra bir kez
-    if gunluk_bugun:
-        sn = int(sayi(gunluk_bugun[-1].get("sn"), sayi(gunluk_bugun[-1].get("saat")) * 3600))
-        seviye = "yuksek" if sn >= 6 * 3600 else "orta" if sn >= 3 * 3600 else "dusuk"
-        b, m = rastgele.choice(OVGU[seviye])
-        sonuc.append(("ovgu", b, m.format(s=sn_metni(sn), ad=ad), 3))
-    return sonuc
+def cift_kullanicilar(pair_id):
+    parcalar = str(pair_id).split("__")
+    if len(parcalar) == 2:
+        return parcalar[0], parcalar[1]
+    return "", ""
 
 
-def ntfy_gonder(konu, baslik, mesaj, oncelik=3):
-    r = requests.post(NTFY_SUNUCU, json={"topic": konu, "title": baslik, "message": mesaj, "priority": oncelik}, timeout=15)
-    r.raise_for_status()
+def seri_gorunum_durumu(kayit, bugun):
+    kayit = kayit if isinstance(kayit, dict) else {}
+    ham_sayi = int(kayit.get("sayi") or 0)
+    son_gun = str(kayit.get("sonSayilanGun") or "")
+    a_gun = str(kayit.get("a_gun") or "")
+    b_gun = str(kayit.get("b_gun") or "")
+    dun = onceki_gun_str(bugun)
+    onceki_iki = onceki_gun_str(dun)
+
+    a_yazdi = (a_gun == bugun)
+    b_yazdi = (b_gun == bugun)
+    bugun_tamam = (son_gun == bugun) or (a_yazdi and b_yazdi)
+
+    if son_gun == bugun:
+        etkin_sayi = ham_sayi
+        riskli = False
+        kayboldu_bugun = False
+    elif son_gun == dun:
+        etkin_sayi = ham_sayi
+        riskli = (etkin_sayi >= 2) and not (a_yazdi and b_yazdi)
+        kayboldu_bugun = False
+    else:
+        etkin_sayi = 0
+        riskli = False
+        kayboldu_bugun = (ham_sayi >= 2 and son_gun == onceki_iki)
+
+    return {
+        "sayi": etkin_sayi,
+        "gorunur": etkin_sayi >= 2,
+        "riskli": riskli,
+        "kayboldu_bugun": kayboldu_bugun,
+        "eski_sayi": ham_sayi if kayboldu_bugun else 0,
+        "bugun_tamam": bugun_tamam,
+        "a_yazdi": a_yazdi,
+        "b_yazdi": b_yazdi,
+    }
 
 
-def main():
-    simdi = datetime.now(TZ)
-    bugun = simdi.strftime("%d.%m.%Y")
-    r = requests.get(f"{FIREBASE_URL}/users.json", timeout=20)
-    r.raise_for_status()
-    kullanicilar = r.json() or {}
-    toplam = 0
-    for ad, veri in kullanicilar.items():
-        if not isinstance(veri, dict):
+def sessiz_saat_mi(dt, son_sans_izin=False):
+    dakika = dt.hour * 60 + dt.minute
+    if son_sans_izin and 23 * 60 <= dakika < 23 * 60 + 30:
+        return False
+    return dakika >= (23 * 60 + 30) or dakika < (8 * 60 + 30)
+
+
+SERI_RISK_20 = [
+    "🔥 {arkadas} ile {sayi} günlük serin bugün henüz tamamlanmadı! Bir selam yaz, ateş sönmesin 💬",
+    "⏳ {arkadas} ile {sayi} günlük seriniz seni bekliyor! Günün bitmesine saatler kala bir mesaj at ✨",
+    "👋 Hey! {arkadas} ile {sayi} günlük seriyi korumak için bugün bir mesaj yazmayı unutma 🔥",
+]
+
+SERI_RISK_22 = [
+    "⚠️ {arkadas} ile {sayi} günlük serin tehlikede! Saat 22:00 oldu, hemen bir mesaj yaz 🔥",
+    "🚨 Ateş sönmek üzere! {arkadas} ile {sayi} günlük serini kurtarmak için son 2 saat ⏳",
+    "🔥 {sayi} günlük emek boşa gitmesin! {arkadas} ile sohbete hemen bir mesaj bırak 💬",
+]
+
+SERI_RISK_2315 = [
+    "🆘 SON ŞANS! {arkadas} ile {sayi} günlük serin gece yarısında sıfırlanacak! Hemen yaz 🔥⏳",
+    "⏰ Gece yarısına 45 dakika kaldı! {arkadas} ile {sayi} günlük serini kurtarmak için son çağrı 🚨",
+    "🔥⏳ {arkadas} ile {sayi} günlük serin kaybolmak üzere! Şimdi 1 mesaj at, seriyi kurtar!",
+]
+
+SERI_KAYBOLDU_HAVUZU = [
+    "💔 {arkadas} ile {eski} günlük seriniz dün tamamlanmadığı için sıfırlandı. Bugün yeni bir seri başlat! 🔥",
+    "🕯️ {arkadas} ile {eski} günlük ateş söndü... Ama üzülme, bugün yazışarak yeni bir rekor kırabilirsiniz! 💪",
+    "😢 {arkadas} ile {eski} günlük seriniz sona erdi. Hemen bir mesaj atıp yeniden 1. günden başlayın! ✨",
+]
+
+BEKLEYEN_ARKADAS_HAVUZU = [
+    "💬 {arkadas} bugün sana yazdı ve cevabını bekliyor! Hem sohbet et hem seriyi ilerlet 🔥",
+    "👀 {arkadas} özel sohbette senden mesaj bekliyor! Cevap ver, bugünün serisi tamamlansın ✨",
+]
+
+HAFTALIK_OZET_HAVUZU = [
+    "🏆 Haftalık Seri Özeti: {aktif} aktif serin var, en uzun serin {rekor} gün 🔥 Harika gidiyorsun!",
+    "🔥 Bu haftayı {aktif} aktif sohbet serisi ve {rekor} günlük rekorla kapatıyorsun! Alevler hiç sönmesin 🚀",
+]
+
+
+def degerlendir(veri, simdi_dt, rng=None):
+    rng = rng or random
+    dt = istanbul_simdi(simdi_dt)
+    bugun_iso = dt.strftime("%Y-%m-%d")
+    bugun_tr = dt.strftime("%d.%m.%Y")
+    saat = dt.hour
+    dakika = dt.minute
+    toplam_dk = saat * 60 + dakika
+
+    veri = veri if isinstance(veri, dict) else {}
+    users = veri.get("users") if isinstance(veri.get("users"), dict) else {}
+    seriler = veri.get("seri") if isinstance(veri.get("seri"), dict) else {}
+
+    bildirimler = []
+
+    def ekle(kul, konu, baslik, mesaj, oncelik, log_key, kategori, son_sans=False):
+        if not konu:
+            return
+        if sessiz_saat_mi(dt, son_sans_izin=son_sans):
+            return
+        u_obj = users.get(kul) or {}
+        b_ayar = u_obj.get("bildirim") if isinstance(u_obj.get("bildirim"), dict) else {}
+        if not b_ayar.get("aktif", True):
+            return
+        if not b_ayar.get(kategori, True):
+            return
+        loglar = u_obj.get("bildirim_log") if isinstance(u_obj.get("bildirim_log"), dict) else {}
+        if loglar.get(log_key):
+            return
+        bildirimler.append({
+            "kullanici": kul,
+            "konu": konu,
+            "baslik": baslik,
+            "mesaj": mesaj,
+            "oncelik": oncelik,
+            "log_anahtari": log_key,
+            "kategori": kategori,
+        })
+
+    for kul, u in sorted(users.items()):
+        if not isinstance(u, dict):
             continue
-        log = veri.get("bildirim_log") or {}
-        gonderilen = listeye(log.get("gonderilen")) if log.get("tarih") == bugun else []
-        yeni = []
-        for bid, baslik, mesaj, oncelik in degerlendir(ad, veri, simdi):
-            if bid in gonderilen:
-                continue
-            konu = veri["bildirim"]["konu"]
-            print(f"[{ad}] {bid}: {baslik} | {mesaj}")
-            if KURU_CALISTIR:
-                continue
-            try:
-                ntfy_gonder(konu, baslik, mesaj, oncelik)
-                yeni.append(bid)
-                toplam += 1
-            except Exception as ex:
-                print(f"[{ad}] gönderilemedi: {ex}")
-        if yeni:
-            requests.patch(f"{FIREBASE_URL}/users/{ad}.json",
-                           json={"bildirim_log": {"tarih": bugun, "gonderilen": gonderilen + yeni}}, timeout=15).raise_for_status()
-    print(f"{simdi:%d.%m.%Y %H:%M} - {toplam} bildirim gönderildi.")
+        b_ayar = u.get("bildirim") if isinstance(u.get("bildirim"), dict) else {}
+        konu = b_ayar.get("konu", "")
+        if not konu or not b_ayar.get("aktif", True):
+            continue
+
+        if 8 * 60 + 45 <= toplam_dk <= 10 * 60:
+            ekle(kul, konu, "☀️ Günaydın Şampiyon!",
+                 "Bugünün planına göz atıp ilk görevinle güne harika bir başlangıç yap! 🚀",
+                 3, f"sabah_{bugun_iso}", "sabah")
+
+        hedef_saat = int(b_ayar.get("baslama", 11) or 11)
+        gun = u.get("gun") if isinstance(u.get("gun"), dict) else {}
+        basladi_mi = (gun.get("tarih") == bugun_tr and bool(gun.get("baslama")))
+        if saat >= hedef_saat and not basladi_mi and toplam_dk < 22 * 60:
+            ekle(kul, konu, "⏰ Derse Başlama Zamanı!",
+                 f"Hedef saatin ({hedef_saat:02d}:00) geçti ama kronometre henüz açılmadı. Hadi masaya! 📚",
+                 4, f"ders_{bugun_iso}", "ders")
+
+        su = u.get("su") if isinstance(u.get("su"), dict) else {}
+        bardak = int(su.get("bardak", 0) or 0) if su.get("tarih") == bugun_tr else 0
+        if 14 <= saat < 16 and bardak < 4:
+            ekle(kul, konu, "💧 Su İçmeyi Unutma!",
+                 f"Bugün şu ana kadar {bardak}/8 bardak su içtin. Bir bardak suyla zihnini tazele! 🚰",
+                 3, f"su14_{bugun_iso}", "su")
+        elif 18 <= saat < 20 and bardak < 6:
+            ekle(kul, konu, "💧 Su Hedefine Az Kaldı!",
+                 f"Bugün {bardak}/8 bardaktasın. Akşam çalışması öncesi suyunu içmeyi unutma! 💧",
+                 3, f"su18_{bugun_iso}", "su")
+
+        gunlukler = u.get("gunluk") or []
+        if isinstance(gunlukler, dict):
+            gunlukler = list(gunlukler.values())
+        bugun_kayitli = any(isinstance(g, dict) and g.get("tarih") == bugun_tr for g in gunlukler)
+        if 21 * 60 + 30 <= toplam_dk <= 23 * 60 and not bugun_kayitli:
+            ekle(kul, konu, "🌙 Gün Sonunu Kaydet",
+                 "Bugünkü çalışmanı ve performansını kaydedip günü huzurla kapatmayı unutma 💖",
+                 3, f"gunsonu_{bugun_iso}", "gunsonu")
+
+    risk_seviye = None
+    if 20 * 60 <= toplam_dk < 22 * 60:
+        risk_seviye = ("20", SERI_RISK_20, 3, False)
+    elif 22 * 60 <= toplam_dk < 23 * 60 + 10:
+        risk_seviye = ("22", SERI_RISK_22, 4, False)
+    elif 23 * 60 + 10 <= toplam_dk < 23 * 60 + 30:
+        risk_seviye = ("2315", SERI_RISK_2315, 5, True)
+
+    kullanici_aktif_seriler = {}
+
+    for pid, kayit in sorted(seriler.items()):
+        if not isinstance(kayit, dict):
+            continue
+        u_a, u_b = cift_kullanicilar(pid)
+        if not u_a or not u_b:
+            continue
+        durum = seri_gorunum_durumu(kayit, bugun_iso)
+        sayi = durum["sayi"]
+
+        if sayi >= 2:
+            kullanici_aktif_seriler.setdefault(u_a, []).append(sayi)
+            kullanici_aktif_seriler.setdefault(u_b, []).append(sayi)
+
+        if durum["riskli"] and risk_seviye is not None:
+            kod, havuz, oncelik, son_sans = risk_seviye
+            for hedef, diger, yazdi in ((u_a, u_b, durum["a_yazdi"]), (u_b, u_a, durum["b_yazdi"])):
+                if not yazdi and hedef in users:
+                    konu = ((users[hedef].get("bildirim") or {}).get("konu") or "")
+                    sablon = rng.choice(havuz)
+                    mesaj = sablon.format(arkadas=diger, sayi=sayi)
+                    baslik = "🆘 Serin Kaybolmak Üzere!" if kod == "2315" else "🔥 Serin Tehlikede!"
+                    ekle(hedef, konu, baslik, mesaj, oncelik,
+                         f"seri_risk_{kod}_{pid}_{bugun_iso}", "sosyal_seri", son_sans=son_sans)
+
+        if durum["kayboldu_bugun"] and 9 * 60 <= toplam_dk <= 12 * 60:
+            eski = durum["eski_sayi"]
+            for hedef, diger in ((u_a, u_b), (u_b, u_a)):
+                if hedef in users:
+                    konu = ((users[hedef].get("bildirim") or {}).get("konu") or "")
+                    mesaj = rng.choice(SERI_KAYBOLDU_HAVUZU).format(arkadas=diger, eski=eski)
+                    ekle(hedef, konu, "💔 Seri Kayboldu", mesaj, 3,
+                         f"seri_kayip_{pid}_{bugun_iso}", "sosyal_seri")
+
+        if 15 * 60 <= toplam_dk < 20 * 60 and (durum["a_yazdi"] ^ durum["b_yazdi"]):
+            bekleyen = u_b if durum["a_yazdi"] else u_a
+            yazan = u_a if durum["a_yazdi"] else u_b
+            if bekleyen in users:
+                konu = ((users[bekleyen].get("bildirim") or {}).get("konu") or "")
+                mesaj = rng.choice(BEKLEYEN_ARKADAS_HAVUZU).format(arkadas=yazan)
+                ekle(bekleyen, konu, f"💬 {yazan} Senden Cevap Bekliyor", mesaj, 3,
+                     f"seri_bekliyor_{pid}_{bugun_iso}", "sosyal_seri")
+
+    if dt.weekday() == 6 and 19 * 60 <= toplam_dk <= 20 * 60 + 30:
+        for kul, s_list in sorted(kullanici_aktif_seriler.items()):
+            if s_list and kul in users:
+                konu = ((users[kul].get("bildirim") or {}).get("konu") or "")
+                mesaj = rng.choice(HAFTALIK_OZET_HAVUZU).format(aktif=len(s_list), rekor=max(s_list))
+                ekle(kul, konu, "🏆 Haftalık Seri Özeti", mesaj, 3,
+                     f"seri_haftalik_{bugun_iso}", "sosyal_seri")
+
+    return bildirimler
+
+
+def calistir():
+    if requests is None:
+        raise RuntimeError("'requests' paketi yüklü değil")
+    users = requests.get(f"{FIREBASE_URL}/users.json", timeout=10).json() or {}
+    seriler = requests.get(f"{FIREBASE_URL}/seri.json", timeout=10).json() or {}
+    simdi = istanbul_simdi()
+    gonderilecekler = degerlendir({"users": users, "seri": seriler}, simdi)
+    for b in gonderilecekler:
+        try:
+            r = requests.post(
+                NTFY_SUNUCU,
+                json={"topic": b["konu"], "title": b["baslik"], "message": b["mesaj"], "priority": b["oncelik"]},
+                timeout=10,
+            )
+            r.raise_for_status()
+            requests.patch(
+                f"{FIREBASE_URL}/users/{b['kullanici']}/bildirim_log.json",
+                json={b["log_anahtari"]: int(simdi.timestamp() * 1000)},
+                timeout=10,
+            )
+        except Exception as ex:
+            print(f"Bildirim gönderilemedi ({b['kullanici']}): {ex}")
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as ex:
-        print("HATA:", ex)
-        sys.exit(1)
+    calistir()
