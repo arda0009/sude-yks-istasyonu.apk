@@ -1489,24 +1489,24 @@ TOM_ETKILESIM_SOZLERI = [
     "Birlikte çalıştığımız her dakika bizi o kampüs kapısına biraz daha yaklaştırıyor {isim}! 🚀",
 ]
 
-# 18 Farklı Kafa Okşama / Sevgi Tepkisi
+# 18 Farklı Kafa Okşama / Sevgi Tepkisi (Sevmek yalnızca mutluluk verir, altın kazandırmaz)
 OKSAMA_SOZLERI = [
-    "Mırıl mırıl... 🥰 Başımı okşadığın için çok mutluyum {isim}! (+6 Mutluluk, +2 🪙 Altın)",
-    "Mırrrr! 🐾 {isim}, senin sevgin bana bütün vitaminlerden daha çok enerji veriyor! (+6 Mutluluk, +2 🪙 Altın)",
-    "Yaşasın! 😊 {isim} beni sevdi, şimdi keyfim tavan yaptı! (+6 Mutluluk, +2 🪙 Altın)",
-    "Kulaklarımın arkasını okşadığında dünyalar benim oluyor {isim}! 💖 (+6 Mutluluk, +2 🪙 Altın)",
-    "En iyi çalışma arkadaşı {isim}! Seninle gurur duyuyorum! 🌟 (+6 Mutluluk, +2 🪙 Altın)",
-    "Miyav! 🐱 Sevginle şarj oldum {isim}, yeni testlere hazırız! (+6 Mutluluk, +2 🪙 Altın)",
-    "Pofuduk tüylerim kabardı, çok teşekkür ederim {isim}! 🥰 (+6 Mutluluk, +2 🪙 Altın)",
-    "Sen bana böyle güzel baktıkça ben de sana şans getireceğim {isim}! 🍀 (+6 Mutluluk, +2 🪙 Altın)",
-    "Mırrr... Kalbim sıcacık oldu {isim}, iyi ki varsın! 💞 (+6 Mutluluk, +2 🪙 Altın)",
-    "Hem ders çalışıp hem beni sevdiğin için dünyanın en tatlı sahibisin {isim}! 🐾 (+6 Mutluluk, +2 🪙 Altın)",
-    "Patimle eline dokunuyorum {isim}, birlikte başaracağız! 🤝 (+6 Mutluluk, +2 🪙 Altın)",
-    "Neşem %100'e doğru uçuyor {isim}, teşekkürler! 🎉 (+6 Mutluluk, +2 🪙 Altın)",
-    "Beni sevdiğinde verdiğin 2 🪙 Altını kumbaramıza attım {isim}! (+6 Mutluluk, +2 🪙 Altın)",
-    "Gözlerimi kapatıp mırlıyorum... 😌 Harikasın {isim}! (+6 Mutluluk, +2 🪙 Altın)",
-    "Seninle her mola çok eğlenceli geçiyor {isim}! 🎈 (+6 Mutluluk, +2 🪙 Altın)",
-    "Motivasyon depomuz doldu taştı {isim}! 🚀 (+6 Mutluluk, +2 🪙 Altın)",
+    "Mırıl mırıl... 🥰 Başımı okşadığın için çok mutluyum {isim}! (+6 Mutluluk)",
+    "Mırrrr! 🐾 {isim}, senin sevgin bana bütün vitaminlerden daha çok moral veriyor! (+6 Mutluluk)",
+    "Yaşasın! 😊 {isim} beni sevdi, şimdi keyfim tavan yaptı! (+6 Mutluluk)",
+    "Kulaklarımın arkasını okşadığında dünyalar benim oluyor {isim}! 💖 (+6 Mutluluk)",
+    "En iyi çalışma arkadaşı {isim}! Seninle gurur duyuyorum! 🌟 (+6 Mutluluk)",
+    "Miyav! 🐱 Sevginle şarj oldum {isim}, yeni testlere hazırız! (+6 Mutluluk)",
+    "Pofuduk tüylerim kabardı, çok teşekkür ederim {isim}! 🥰 (+6 Mutluluk)",
+    "Sen bana böyle güzel baktıkça ben de sana şans getireceğim {isim}! 🍀 (+6 Mutluluk)",
+    "Mırrr... Kalbim sıcacık oldu {isim}, iyi ki varsın! 💞 (+6 Mutluluk)",
+    "Hem ders çalışıp hem beni sevdiğin için dünyanın en tatlı sahibisin {isim}! 🐾 (+6 Mutluluk)",
+    "Patimle eline dokunuyorum {isim}, birlikte başaracağız! 🤝 (+6 Mutluluk)",
+    "Neşem %100'e doğru uçuyor {isim}, teşekkürler! 🎉 (+6 Mutluluk)",
+    "Başımı okşaman bana harika moral oldu {isim}, hadi şimdi ders çalışıp altın kazanalım! (+6 Mutluluk)",
+    "Gözlerimi kapatıp mırlıyorum... 😌 Harikasın {isim}! (+6 Mutluluk)",
+    "Seninle her mola çok eğlenceli geçiyor {isim}! 🎈 (+6 Mutluluk)",
+    "Motivasyon depomuz doldu taştı {isim}! 🚀 (+6 Mutluluk)",
 ]
 
 # 16 Farklı Pomodoro Odak Tepkisi
@@ -1571,9 +1571,9 @@ EVCIL_ANAHTAR_CEVAPLARI = [
         "Nam nam! 🥛 Bana ılık süt veya mama aldığında hem karnım doyuyor hem de mutluluğum artıyor {isim}!",
     ]),
     (("altin", "altın", "para", "puan", "nasil kazan", "nasıl kazan"), [
-        "Altın kazanmak çok kolay {isim}! 🪙 Pomodoro/Kronometre bitirdiğinde, deneme neti girdiğinde veya çözdüğün soruları kaydettiğinde altın kazanırsın!",
+        "Altın kazanmak için gerçekten emek vermeliyiz {isim}! 🪙 Pomodoro/Kronometre ile ders çalıştığında, deneme neti girdiğinde veya çözdüğün soruları kaydettiğinde altın kazanırsın!",
         "Çözdüğün her soru ve çalıştığın her dakika sana 🪙 Altın ve XP kazandırır {isim}. Bu altınlarla da beni besleyebilir ve odayı süsleyebilirsin!",
-        "Hatta başımı okşadığında bile sana sevgi bonusu olarak +2 🪙 Altın veriyorum {isim}! 😊",
+        "Beni sevmek veya okşamak mutluluğumu artırır ama 🪙 Altın kazandırmaz {isim}; altınları yalnızca ders çalışarak kazanabiliriz! 📚💪",
     ]),
     (("buyu", "büyü", "evrim", "seviye", "mezun", "sapka", "şapka", "boyut", "yas", "yaş"), [
         "Ben 4 farklı evrede büyüyorum {isim}! 🐾 Önce 4 ayaklı minik bebek kedi, sonra ayakta duran küçük kedi, sonra genç kedi ve YKS'ye 3 hafta kala kep takmış mezun kedi olacağım! 🎓",
@@ -2217,11 +2217,11 @@ class EvcilHayvanMotoru:
         return f"Ahh! Kafama dev bir silgi düştü, bütün kağıtlarım etrafa saçıldı! 📄💥 Pomodoro'yu yarıda bırakınca çok üzüldüm {isim}... 🥺"
 
     def oksa_sev(self):
-        """Sevgi Bölgesi (Petting Zone): Kediyi okşayınca mutluluk ve altın verir (16+ farklı yanıt)."""
+        """Sevgi Bölgesi (Petting Zone): Kediyi okşayınca yalnızca mutluluk verir (altın kazandırmaz)."""
         with self._lock:
             self._conn.execute(
                 """UPDATE pet_state
-                SET mutluluk = MIN(100.0, mutluluk + 6.0), yildiz = yildiz + 2,
+                SET mutluluk = MIN(100.0, mutluluk + 6.0),
                     durum = 'HAPPY_JUMP', last_active_timestamp = ?
                 WHERE id = 1""",
                 (time.time(),),
@@ -3575,18 +3575,20 @@ def main(page: ft.Page):
 
         def bitir(e):
             eklenen = krono_bitir_kaydet()
-            if eklenen > 0:
+            if eklenen >= 300:
                 evcil_motor.kullanici_ayarla(kullanici_adi())
-                dk = max(1, eklenen // 60)
+                dk = eklenen // 60
                 mola_soz = evcil_motor.pomodoro_molasi(dakika=dk, ders_adi=ui["pomo_ders_kat"])
                 evcil_ui["mesaj"] = mola_soz
                 evcil_postaci_kontrol_et()
+                yenile()
                 snack(f"🎉 {sn_metni(eklenen)} çalışma eklendi! 🪙 Altın ve XP kazandın!")
+            elif eklenen > 0:
                 yenile()
-                evcil_konustur(mola_soz)
+                snack(f"⏱ {sn_metni(eklenen)} çalışma sürene eklendi! (🪙 Altın kazanmak için en az 5 dakika odaklanmalısın)")
             else:
-                snack("Süre 0 olduğu için kayıt eklenmedi.")
                 yenile()
+                snack("Süre 0 olduğu için kayıt eklenmedi.")
 
         def sifirla(e):
             ceza_soz = evcil_motor.pomodoro_bozuldu()
@@ -3851,10 +3853,13 @@ def main(page: ft.Page):
 
         def konu_tikla(e):
             anahtar = e.control.data
+            odulluler = DB.setdefault("konu_odul_alindi", [])
             if e.control.value and anahtar not in DB["konu_bitti"]:
                 DB["konu_bitti"].append(anahtar)
-                besin = evcil_motor.besle_ders_ile(ui["ders"], soru_sayisi=15, dakika=15)
-                evcil_ui["mesaj"] = besin["mesaj"]
+                if anahtar not in odulluler:
+                    odulluler.append(anahtar)
+                    besin = evcil_motor.besle_ders_ile(ui["ders"], soru_sayisi=15, dakika=15)
+                    evcil_ui["mesaj"] = besin["mesaj"]
             elif not e.control.value and anahtar in DB["konu_bitti"]:
                 DB["konu_bitti"].remove(anahtar)
             kaydet("konu_bitti")
@@ -7135,7 +7140,7 @@ def main(page: ft.Page):
         kafa_dokunma_alani = ft.Container(
             left=96, right=96, top=125, height=160, border_radius=80,
             bgcolor=SEFFAF, ink=True, on_click=kafa_oksa_tikla,
-            tooltip=f"{st['isim']} başını okşa 🖐️ (+Mutluluk, +2 🪙 Altın)",
+            tooltip=f"{st['isim']} başını okşa 🖐️ (+Mutluluk)",
             alignment=ft.Alignment(0, -0.85),
             content=ft.Text(sapka_emoji, size=34) if sapka_emoji else None,
         )
@@ -7324,31 +7329,12 @@ def main(page: ft.Page):
                     ], spacing=10),
                 ))
 
-            ders_secim_dd = dd_olustur(
-                ["Türkçe / Edebiyat (Karbonhidrat)", "Tarih / Coğrafya / Felsefe (Karbonhidrat)",
-                 "Matematik / Geometri (Protein)", "Fizik / Kimya / Biyoloji (Vitamin)", "Branş / Genel Deneme (Vitamin)"],
-                "Matematik / Geometri (Protein)",
-                None,
-                label="Çözdüğün Ders",
-                border_color=r["border"], focused_border_color=r["hdr"], color=r["txt"], border_radius=14,
-            )
-            soru_in = girdi(r, "Örn: 30", label="Çözülen Soru Sayısı", keyboard_type=ft.KeyboardType.NUMBER, expand=True)
-            dk_in = girdi(r, "Örn: 40", label="Süre (Dk)", keyboard_type=ft.KeyboardType.NUMBER, expand=True)
-
-            def ders_altin_kaydet(e):
-                soru_adet = int(sayi(soru_in.value))
-                dk_adet = int(sayi(dk_in.value))
-                if soru_adet <= 0 and dk_adet <= 0:
-                    snack("Lütfen en azından çözdüğün soru sayısını veya dakikayı yaz 📝")
-                    return
-                secilen_ders = ders_secim_dd.value or "Matematik"
-                sonuc = evcil_motor.besle_ders_ile(secilen_ders, soru_sayisi=soru_adet, dakika=dk_adet)
-                evcil_ui["mesaj"] = sonuc["mesaj"]
-                evcil_postaci_kontrol_et()
+            def calismaya_git(e):
+                ui["sekme"] = 1
+                ui["calis_tab"] = 0
+                if nav_bar is not None:
+                    nav_bar.selected_index = 1
                 yenile()
-                if sonuc["evrim_atladi"]:
-                    kutlama()
-                snack(sonuc["mesaj"])
 
             isim_in = girdi(r, st["isim"], label="Evcil Hayvanının Adı", expand=True)
 
@@ -7417,12 +7403,10 @@ def main(page: ft.Page):
                         size=13, weight=ft.FontWeight.W_800, color=r["hdr"]),
                 *yemek_satirlari,
                 ft.Divider(height=8, color=r["border"]),
-                ft.Text("📚 Çözülen Soruları Kaydet & Altın Kazan (🪙)", size=14, weight=ft.FontWeight.W_800, color=r["hdr"]),
-                ft.Text("Ders çalışmak ve soru çözmek sana 🪙 Altın ve XP kazandırır; kazandığın altınlarla yukarıdaki menüden kedini besleyebilirsin!",
+                ft.Text("🪙 Nasıl Altın Kazanılır?", size=14, weight=ft.FontWeight.W_800, color=r["hdr"]),
+                ft.Text("Altın yalnızca gerçek çalışmayla kazanılır: Kronometre/Pomodoro ile en az 5 dk odaklandığında, deneme neti eklediğinde veya müfredat konusu bitirdiğinde 🪙 Altın ve XP kazanırsın. (Kediyi sevmek altın vermez, yalnızca mutluluğunu artırır.)",
                         size=12, color=r["muted"]),
-                ders_secim_dd,
-                ft.Row([soru_in, dk_in], spacing=10),
-                buton(r, "Soruları Kaydet & Altın Kazan 🪙", ders_altin_kaydet, genis=True, yukseklik=46),
+                buton(r, "⏱ Çalış Sekmesine Git & Altın Kazan 🪙", calismaya_git, genis=True, yukseklik=44),
                 ft.Row([isim_in, buton(r, "Adı Kaydet", isim_kaydet, ikincil=True, yukseklik=44)], spacing=8),
                 ft.Divider(height=8, color=r["border"]),
                 ft.Text("🖼️ Oda & Kedi Görseli Özelleştir (3D Fotoğraf / GIF)", size=13, weight=ft.FontWeight.W_800, color=r["hdr"]),
