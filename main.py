@@ -257,7 +257,7 @@ HEDEF_UNIVERSITE = "Güneş Üniversitesi Tıp Fakültesi"
 HEDEF_TYT = 105.0
 HEDEF_AYT = 64.0
 YKS_TARIHI = datetime(2027, 6, 19, 10, 15)
-PANEL_SIFRESI = "1905"
+PANEL_SIFRESI = "10150256370"
 SPOTIFY_URL = "https://open.spotify.com/playlist/0zHr4z4SfUeKZOXv3rxVIV"
 
 GROQ_API_KEY = ""
