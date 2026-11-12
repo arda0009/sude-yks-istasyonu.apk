@@ -24,14 +24,19 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Flet Kur
+      - name: En Guncel Flutter SDK Kur
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Flet ve Bagimliliklari Yukle
         run: |
           pip install --upgrade pip
-          pip install flet flet-cli requests
+          pip install "flet[all]" requests
 
       - name: APK Derle
         run: |
-          flet build apk --verbose
+          flet build apk --verbose --yes
 
       - name: APK Dosyasini Yukle
         uses: actions/upload-artifact@v4
