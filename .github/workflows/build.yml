@@ -13,15 +13,10 @@ jobs:
       - name: Depoyu Klonla
         uses: actions/checkout@v4
 
-      - name: Eksik Linux Paketlerini Kur
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y libgtk-3-dev ninja-build clang cmake pkg-config
-
       - name: Python Kur
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Java JDK 17 Kur
         uses: actions/setup-java@v4
@@ -29,24 +24,16 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Android SDK Kur
-        uses: android-actions/setup-android@v3
-
       - name: Flutter SDK Kur
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          flutter-version: '3.24.0'
-
-      - name: Lisanslari Onayla ve Ayarla
-        run: |
-          yes | sdkmanager --licenses || true
-          flutter config --no-enable-linux-desktop
+          flutter-version: '3.29.0'
 
       - name: Flet ve Bagimliliklari Yukle
         run: |
           pip install --upgrade pip
-          pip install flet==0.24.1
+          pip install "flet[all]>=0.27.0"
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: APK Derle
