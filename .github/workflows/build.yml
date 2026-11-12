@@ -1,32 +1,47 @@
 name: Sude Istasyonu APK Derle
 
-on: [push, workflow_dispatch]
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+
     steps:
-      - name: Kodları Al
+      - name: Depoyu Klonla
         uses: actions/checkout@v4
 
-      - name: Python Kurulumu
+      - name: Python Kur
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Flutter Altyapısını Kur
+      - name: Java JDK 17 Kur
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Flutter SDK Kur
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: '3.24.0'
 
-      - name: Kütüphaneleri Yükle
-        run: pip install flet && pip install -r requirements.txt
+      - name: Flet ve Bağımlılıkları Yükle
+        run: |
+          pip install --upgrade pip
+          pip install flet==0.24.1
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: APK Dosyasını Derle
-        run: flet build apk
+      - name: APK Derle
+        run: |
+          flet build apk --verbose
 
-      - name: APK'yı İndirilebilir Hale Getir
+      - name: APK Dosyasını Yükle
         uses: actions/upload-artifact@v4
         with:
-          name: Sude_Istasyonu_APK
-          path: build/apk/**/*.apk
+          name: sude-istasyonu-apk
+          path: build/apk/*.apk
