@@ -1,47 +1,30 @@
-name: Sude Istasyonu APK Derle
+name: YKS Asistanim Bildirim ve Seri Botu
 
 on:
-  push:
-    branches: [ "main" ]
+  schedule:
+    # Gunduz ve sabah saatlerinde her 15 dakikada bir calisir
+    - cron: "*/15 5-16 * * *"
+    # Aksam kritik seri saatlerinde (20:00 - 23:59 TSİ / 17:00 - 20:59 UTC) her 5 dakikada bir calisir
+    - cron: "*/5 17-20 * * *"
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04
-
+  bildirim-gonder:
+    runs-on: ubuntu-latest
     steps:
-      - name: Depoyu Klonla
+      - name: Depoyu kopyala
         uses: actions/checkout@v4
 
-      - name: Python Kur
+      - name: Python kur
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Java JDK 17 Kur
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
+      - name: Bagimliliklari yukle
+        run: pip install requests
 
-      - name: Flutter SDK Kur
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          flutter-version: '3.24.0'
-
-      - name: Flet ve Bağımlılıkları Yükle
-        run: |
-          pip install --upgrade pip
-          pip install flet==0.24.1
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
-      - name: APK Derle
-        run: |
-          flet build apk --verbose
-
-      - name: APK Dosyasını Yükle
-        uses: actions/upload-artifact@v4
-        with:
-          name: sude-istasyonu-apk
-          path: build/apk/*.apk
+      - name: Bildirim botunu calistir
+        env:
+          FIREBASE_URL: ${{ secrets.FIREBASE_URL }}
+          NTFY_SUNUCU: ${{ secrets.NTFY_SUNUCU }}
+        run: python bildirim_botu.py
