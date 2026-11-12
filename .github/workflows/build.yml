@@ -16,7 +16,7 @@ jobs:
       - name: Python Kur
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
 
       - name: Java JDK 17 Kur
         uses: actions/setup-java@v4
@@ -24,17 +24,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Flutter SDK Kur
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          flutter-version: '3.29.0'
-
-      - name: Flet ve Bagimliliklari Yukle
+      - name: Flet Kur
         run: |
           pip install --upgrade pip
-          pip install "flet[all]>=0.27.0"
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install flet flet-cli requests
 
       - name: APK Derle
         run: |
