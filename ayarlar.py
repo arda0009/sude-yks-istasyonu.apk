@@ -29,14 +29,14 @@ SEFFAF = "#00000000"
 # 1. TEMA VE VERİTABANI ŞEMASI
 # ==========================================
 TEMA_RENKLERI = {
-    "Gündüz Bahçesi 🌻": {"bg": "#FFF5F5", "card_bg": "#FFFFFF", "border": "#FFD1DC", "hdr": "#D6336C", "accent": "#FF8FAB", "muted": "#868E96", "gul_renk": "#FFB3C6", "gul_op": 0.5, "txt": "#495057", "mode": ft.ThemeMode.LIGHT},
-    "Gece Moru 🌙": {"bg": "#1E1E24", "card_bg": "#2B2B36", "border": "#503080", "hdr": "#C084FC", "accent": "#E9D5FF", "muted": "#94A3B8", "gul_renk": "#3B2859", "gul_op": 0.4, "txt": "#E2E8F0", "mode": ft.ThemeMode.DARK},
-    "Doğa Yeşili 🌿": {"bg": "#F4F9F4", "card_bg": "#FFFFFF", "border": "#B7E4C7", "hdr": "#2D6A4F", "accent": "#52B788", "muted": "#718096", "gul_renk": "#B7E4C7", "gul_op": 0.5, "txt": "#2B3E34", "mode": ft.ThemeMode.LIGHT},
-    "Coffee Latte ☕": {"bg": "#FDF6EC", "card_bg": "#FFFFFF", "border": "#DDBEA9", "hdr": "#7F5539", "accent": "#B08968", "muted": "#A0AEC0", "gul_renk": "#DDBEA9", "gul_op": 0.5, "txt": "#4A3525", "mode": ft.ThemeMode.LIGHT},
-    "Kozmik Galaksi 🌌": {"bg": "#0D0914", "card_bg": "#1A1429", "border": "#2A2240", "hdr": "#8B5CF6", "accent": "#00E5FF", "muted": "#8A849C", "gul_renk": "#1E3A8A", "gul_op": 0.3, "txt": "#F8F9FA", "mode": ft.ThemeMode.DARK},
-    "Sakura Pembe 🌸": {"bg": "#FFF0F3", "card_bg": "#FFFFFF", "border": "#FFB3C1", "hdr": "#FF4D6D", "accent": "#FF758F", "muted": "#A0AEB0", "gul_renk": "#FFB3C1", "gul_op": 0.6, "txt": "#590D22", "mode": ft.ThemeMode.LIGHT},
+    "Gündüz Bahçesi 🌻": {"bg": "#FDF7F9", "card_bg": "#FFFFFF", "border": "#F5D9E4", "hdr": "#D96B93", "accent": "#F49EC0", "muted": "#9197A1", "gul_renk": "#F8C8DA", "gul_op": 0.45, "txt": "#464952", "mode": ft.ThemeMode.LIGHT},
+    "Gece Moru 🌙": {"bg": "#181722", "card_bg": "#232131", "border": "#393354", "hdr": "#B993F4", "accent": "#DEC7FF", "muted": "#969DB0", "gul_renk": "#362852", "gul_op": 0.35, "txt": "#E8EBF2", "mode": ft.ThemeMode.DARK},
+    "Doğa Yeşili 🌿": {"bg": "#F6FAF7", "card_bg": "#FFFFFF", "border": "#CBE5D4", "hdr": "#4E8D6E", "accent": "#74BA97", "muted": "#7C8A83", "gul_renk": "#C4E2CF", "gul_op": 0.45, "txt": "#34463C", "mode": ft.ThemeMode.LIGHT},
+    "Coffee Latte ☕": {"bg": "#FBF7F2", "card_bg": "#FFFFFF", "border": "#E6D5C6", "hdr": "#8D6B53", "accent": "#B9967B", "muted": "#9B9690", "gul_renk": "#E4D3C3", "gul_op": 0.45, "txt": "#4B3B2E", "mode": ft.ThemeMode.LIGHT},
+    "Kozmik Galaksi 🌌": {"bg": "#13101E", "card_bg": "#1D192B", "border": "#2F2846", "hdr": "#A78BFA", "accent": "#7DD3FC", "muted": "#948FA8", "gul_renk": "#232E5C", "gul_op": 0.3, "txt": "#F1F3F9", "mode": ft.ThemeMode.DARK},
+    "Sakura Pembe 🌸": {"bg": "#FFF6F8", "card_bg": "#FFFFFF", "border": "#FAD4DE", "hdr": "#E86C8D", "accent": "#F498B1", "muted": "#9A9FA6", "gul_renk": "#FAD2DC", "gul_op": 0.5, "txt": "#52323B", "mode": ft.ThemeMode.LIGHT},
 }
-VARSAYILAN_TEMA = "Kozmik Galaksi 🌌"
+VARSAYILAN_TEMA = "Sakura Pembe 🌸"
 
 HAFTALIK_PLAN = {
     "Pazartesi": [{"gorev": "Matematik (Türev) - 2 Saat", "bitti": False}, {"gorev": "Paragraf - 30 Soru", "bitti": False}],
@@ -183,8 +183,9 @@ VARSAYILAN_VERI = {
     "aktif_sayac": VARSAYILAN_AKTIF_SAYAC,  # Ekran kapansa bile başlangıç zamanını hafızada tutan kalıcı sayaç
     "evcil": {},           # Cihazlar arası (telefon + tablet) bulut senkronlu evcil hayvan ve altın verisi
     "evcil_ozel_gorsel": {},
+    "plan_gecmis": [],     # Haftalık planda daha önce eklenen görevler (otomatik tamamlama için)
 }
 
 BULUT_ANAHTARLARI = [k for k in VARSAYILAN_VERI if k != "oturum"]
 TARIHLI_ANAHTARLAR = ("calisma_sn", "calisma_log")
-LISTE_ANAHTARLARI = ("todo", "netler", "konu_bitti", "kumbara", "gunluk", "ozel_gorevler", "acilan_oduller")
+LISTE_ANAHTARLARI = ("todo", "netler", "konu_bitti", "kumbara", "gunluk", "ozel_gorevler", "acilan_oduller", "plan_gecmis")

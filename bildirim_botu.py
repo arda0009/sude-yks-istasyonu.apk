@@ -12,7 +12,11 @@ NTFY_SUNUCU = os.environ.get("NTFY_SUNUCU", "https://ntfy.sh").rstrip("/")
 ISTANBUL_TZ = timezone(timedelta(hours=3))
 
 
+# ==========================================
+# SAF (PURE) YARDIMCI VE SERİ FONKSİYONLARI
+# ==========================================
 def istanbul_simdi(ts=None):
+    """Verilen unix saniyesini (veya şu anı) Europe/Istanbul (UTC+3) datetime olarak döndürür."""
     if isinstance(ts, datetime):
         if ts.tzinfo is None:
             return ts.replace(tzinfo=ISTANBUL_TZ)
@@ -23,6 +27,7 @@ def istanbul_simdi(ts=None):
 
 
 def istanbul_bugun(ts=None):
+    """Europe/Istanbul takvim gününü 'YYYY-MM-DD' olarak döndürür."""
     return istanbul_simdi(ts).strftime("%Y-%m-%d")
 
 
@@ -47,6 +52,9 @@ def cift_kullanicilar(pair_id):
 
 
 def seri_gorunum_durumu(kayit, bugun):
+    """Seri kaydının bugünkü durumunu hesaplar (Flet bağımsız saf fonksiyon).
+    Döndürür: dict(sayi, gorunur, riskli, kayboldu_bugun, eski_sayi, bugun_tamam, a_yazdi, b_yazdi, eksikler)
+    """
     kayit = kayit if isinstance(kayit, dict) else {}
     ham_sayi = int(kayit.get("sayi") or 0)
     son_gun = str(kayit.get("sonSayilanGun") or "")
@@ -70,6 +78,7 @@ def seri_gorunum_durumu(kayit, bugun):
     else:
         etkin_sayi = 0
         riskli = False
+        # Dün sayılmadıysa ve bir önceki gün en az 2 günlük seri varsa bu sabah seri kaybolmuştur
         kayboldu_bugun = (ham_sayi >= 2 and son_gun == onceki_iki)
 
     return {
@@ -85,12 +94,16 @@ def seri_gorunum_durumu(kayit, bugun):
 
 
 def sessiz_saat_mi(dt, son_sans_izin=False):
+    """23:30 ile 08:30 arası sessiz saatlerdir. 23:15 son şans uyarısına izin verilir."""
     dakika = dt.hour * 60 + dt.minute
     if son_sans_izin and 23 * 60 <= dakika < 23 * 60 + 30:
         return False
     return dakika >= (23 * 60 + 30) or dakika < (8 * 60 + 30)
 
 
+# ==========================================
+# ZENGİN TÜRKÇE BİLDİRİM HAVUZLARI
+# ==========================================
 SERI_RISK_20 = [
     "🔥 {arkadas} ile {sayi} günlük serin bugün henüz tamamlanmadı! Bir selam yaz, ateş sönmesin 💬",
     "⏳ {arkadas} ile {sayi} günlük seriniz seni bekliyor! Günün bitmesine saatler kala bir mesaj at ✨",
@@ -127,6 +140,10 @@ HAFTALIK_OZET_HAVUZU = [
 
 
 def degerlendir(veri, simdi_dt, rng=None):
+    """Tüm Firebase verisini ve İstanbul zamanını alıp gönderilecek bildirim listesini döndürür.
+    Saf (pure) fonksiyondur; ağ çağrısı yapmaz, birim testlerinde doğrudan çağrılır.
+    Döndürür: list of dict(kullanici, konu, baslik, mesaj, oncelik, log_anahtari, kategori)
+    """
     rng = rng or random
     dt = istanbul_simdi(simdi_dt)
     bugun_iso = dt.strftime("%Y-%m-%d")
@@ -165,6 +182,7 @@ def degerlendir(veri, simdi_dt, rng=None):
             "kategori": kategori,
         })
 
+    # 1) KULLANICI BAZLI ÇALIŞMA / SU / GÜN SONU HATIRLATMALARI
     for kul, u in sorted(users.items()):
         if not isinstance(u, dict):
             continue
@@ -173,11 +191,13 @@ def degerlendir(veri, simdi_dt, rng=None):
         if not konu or not b_ayar.get("aktif", True):
             continue
 
+        # Sabah planı (08:45 - 10:00)
         if 8 * 60 + 45 <= toplam_dk <= 10 * 60:
             ekle(kul, konu, "☀️ Günaydın Şampiyon!",
                  "Bugünün planına göz atıp ilk görevinle güne harika bir başlangıç yap! 🚀",
                  3, f"sabah_{bugun_iso}", "sabah")
 
+        # Derse başlama hedefi
         hedef_saat = int(b_ayar.get("baslama", 11) or 11)
         gun = u.get("gun") if isinstance(u.get("gun"), dict) else {}
         basladi_mi = (gun.get("tarih") == bugun_tr and bool(gun.get("baslama")))
@@ -186,6 +206,7 @@ def degerlendir(veri, simdi_dt, rng=None):
                  f"Hedef saatin ({hedef_saat:02d}:00) geçti ama kronometre henüz açılmadı. Hadi masaya! 📚",
                  4, f"ders_{bugun_iso}", "ders")
 
+        # Su hatırlatması (14:00 ve 18:00 civarı)
         su = u.get("su") if isinstance(u.get("su"), dict) else {}
         bardak = int(su.get("bardak", 0) or 0) if su.get("tarih") == bugun_tr else 0
         if 14 <= saat < 16 and bardak < 4:
@@ -197,6 +218,7 @@ def degerlendir(veri, simdi_dt, rng=None):
                  f"Bugün {bardak}/8 bardaktasın. Akşam çalışması öncesi suyunu içmeyi unutma! 💧",
                  3, f"su18_{bugun_iso}", "su")
 
+        # Gün sonu hatırlatması (21:30 - 23:00)
         gunlukler = u.get("gunluk") or []
         if isinstance(gunlukler, dict):
             gunlukler = list(gunlukler.values())
@@ -206,6 +228,8 @@ def degerlendir(veri, simdi_dt, rng=None):
                  "Bugünkü çalışmanı ve performansını kaydedip günü huzurla kapatmayı unutma 💖",
                  3, f"gunsonu_{bugun_iso}", "gunsonu")
 
+    # 2) SERİ (STREAK) BİLDİRİMLERİ
+    # Seviye belirleme: 20:00-21:59 -> 20, 22:00-23:09 -> 22, 23:10-23:29 -> 2315
     risk_seviye = None
     if 20 * 60 <= toplam_dk < 22 * 60:
         risk_seviye = ("20", SERI_RISK_20, 3, False)
@@ -229,6 +253,7 @@ def degerlendir(veri, simdi_dt, rng=None):
             kullanici_aktif_seriler.setdefault(u_a, []).append(sayi)
             kullanici_aktif_seriler.setdefault(u_b, []).append(sayi)
 
+        # a) Seri tehlikede (20:00 / 22:00 / 23:15) -> sadece bugün henüz yazmamış tarafa gider
         if durum["riskli"] and risk_seviye is not None:
             kod, havuz, oncelik, son_sans = risk_seviye
             for hedef, diger, yazdi in ((u_a, u_b, durum["a_yazdi"]), (u_b, u_a, durum["b_yazdi"])):
@@ -240,6 +265,7 @@ def degerlendir(veri, simdi_dt, rng=None):
                     ekle(hedef, konu, baslik, mesaj, oncelik,
                          f"seri_risk_{kod}_{pid}_{bugun_iso}", "sosyal_seri", son_sans=son_sans)
 
+        # b) Seri kayboldu (ertesi sabah 09:00 - 12:00 arası 1 kez)
         if durum["kayboldu_bugun"] and 9 * 60 <= toplam_dk <= 12 * 60:
             eski = durum["eski_sayi"]
             for hedef, diger in ((u_a, u_b), (u_b, u_a)):
@@ -249,6 +275,7 @@ def degerlendir(veri, simdi_dt, rng=None):
                     ekle(hedef, konu, "💔 Seri Kayboldu", mesaj, 3,
                          f"seri_kayip_{pid}_{bugun_iso}", "sosyal_seri")
 
+        # c) Arkadaşın bugün yazdı ve bekliyor (15:00 - 19:59 arası, tek taraf yazdıysa)
         if 15 * 60 <= toplam_dk < 20 * 60 and (durum["a_yazdi"] ^ durum["b_yazdi"]):
             bekleyen = u_b if durum["a_yazdi"] else u_a
             yazan = u_a if durum["a_yazdi"] else u_b
@@ -258,6 +285,7 @@ def degerlendir(veri, simdi_dt, rng=None):
                 ekle(bekleyen, konu, f"💬 {yazan} Senden Cevap Bekliyor", mesaj, 3,
                      f"seri_bekliyor_{pid}_{bugun_iso}", "sosyal_seri")
 
+    # d) Pazar akşamı (19:00 - 20:30) haftalık seri özeti
     if dt.weekday() == 6 and 19 * 60 <= toplam_dk <= 20 * 60 + 30:
         for kul, s_list in sorted(kullanici_aktif_seriler.items()):
             if s_list and kul in users:

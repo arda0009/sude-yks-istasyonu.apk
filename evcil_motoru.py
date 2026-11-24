@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS pet_state (
     durum TEXT NOT NULL DEFAULT 'IDLE',
     secili_sapka TEXT NOT NULL DEFAULT '',
     secili_gozluk TEXT NOT NULL DEFAULT '',
-    last_active_timestamp REAL NOT NULL DEFAULT 0.0
+    last_active_timestamp REAL NOT NULL DEFAULT 0.0,
+    last_fed_timestamp REAL NOT NULL DEFAULT 0.0,
+    evden_gitti INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS subject_study_log (
@@ -73,7 +75,7 @@ CREATE TABLE IF NOT EXISTS postman_letters (
 );
 """
 
-EVCIL_DURUMLAR = ("IDLE", "EATING", "STUDYING", "SLEEPING", "SAD", "HUNGRY", "HAPPY_JUMP", "TALKING")
+EVCIL_DURUMLAR = ("IDLE", "EATING", "STUDYING", "SLEEPING", "SAD", "HUNGRY", "HAPPY_JUMP", "TALKING", "GONE")
 EVCIL_EVRIMLER = (
     ("BEBEK", "🐾 1. Evre: Minik Bebek Kedi", 0),
     ("KUCUK", "🐱 2. Evre: Küçük Kedi", 6000),
@@ -438,15 +440,26 @@ class EvcilHayvanMotoru:
         with self._lock:
             cur = self._conn.cursor()
             cur.executescript(EVCIL_SQL_SEMA)
+            for col_sql in (
+                "ALTER TABLE pet_state ADD COLUMN last_fed_timestamp REAL NOT NULL DEFAULT 0.0",
+                "ALTER TABLE pet_state ADD COLUMN evden_gitti INTEGER NOT NULL DEFAULT 0",
+            ):
+                try:
+                    cur.execute(col_sql)
+                except Exception:
+                    pass
             simdi = time.time()
-            cur.execute("SELECT id FROM pet_state WHERE id = 1")
-            if cur.fetchone() is None:
+            cur.execute("SELECT id, last_fed_timestamp FROM pet_state WHERE id = 1")
+            mevcut_st = cur.fetchone()
+            if mevcut_st is None:
                 cur.execute(
                     """INSERT INTO pet_state
-                    (id, isim, evrim_asamasi, xp, seviye, yildiz, karbonhidrat, protein, vitamin, mutluluk, durum, secili_sapka, secili_gozluk, last_active_timestamp)
-                    VALUES (1, 'Pofuduk', 'BEBEK', 0, 1, 60, 75.0, 75.0, 75.0, 85.0, 'IDLE', '', '', ?)""",
-                    (simdi,),
+                    (id, isim, evrim_asamasi, xp, seviye, yildiz, karbonhidrat, protein, vitamin, mutluluk, durum, secili_sapka, secili_gozluk, last_active_timestamp, last_fed_timestamp, evden_gitti)
+                    VALUES (1, 'Pofuduk', 'BEBEK', 0, 1, 60, 75.0, 75.0, 75.0, 85.0, 'IDLE', '', '', ?, ?, 0)""",
+                    (simdi, simdi),
                 )
+            elif float(mevcut_st["last_fed_timestamp"] or 0.0) <= 0.0 or float(mevcut_st["last_fed_timestamp"] or 0.0) > simdi + 3600.0:
+                cur.execute("UPDATE pet_state SET last_fed_timestamp = ?, evden_gitti = 0 WHERE id = 1", (simdi,))
             for esya in EVCIL_ESYA_KATALOGU:
                 acik = 1 if esya.get("baslangic") else 0
                 cur.execute(
@@ -540,6 +553,7 @@ class EvcilHayvanMotoru:
             ]
 
             ts_aktif = round(float(st.get("last_active_timestamp") or time.time()), 2)
+            ts_fed = round(float(st.get("last_fed_timestamp") or ts_aktif), 2)
             return {
                 "updated_at": ts_aktif,
                 "isim": str(st.get("isim") or "Pofuduk"),
@@ -548,14 +562,16 @@ class EvcilHayvanMotoru:
                 "seviye": int(st.get("seviye") or 1),
                 "altin": int(st.get("yildiz") or 0),
                 "yildiz": int(st.get("yildiz") or 0),
-                "karbonhidrat": round(float(st.get("karbonhidrat") or 75.0), 1),
-                "protein": round(float(st.get("protein") or 75.0), 1),
-                "vitamin": round(float(st.get("vitamin") or 75.0), 1),
-                "mutluluk": round(float(st.get("mutluluk") or 85.0), 1),
+                "karbonhidrat": round(float(st.get("karbonhidrat") or 0.0), 1),
+                "protein": round(float(st.get("protein") or 0.0), 1),
+                "vitamin": round(float(st.get("vitamin") or 0.0), 1),
+                "mutluluk": round(float(st.get("mutluluk") or 0.0), 1),
                 "durum": str(st.get("durum") or "IDLE"),
                 "secili_sapka": str(st.get("secili_sapka") or ""),
                 "secili_gozluk": str(st.get("secili_gozluk") or ""),
                 "last_active_timestamp": ts_aktif,
+                "last_fed_timestamp": ts_fed,
+                "evden_gitti": int(st.get("evden_gitti") or 0),
                 "esyalar": esyalar,
                 "mektuplar": mektuplar,
                 "gunlukler": gunlukler,
@@ -600,14 +616,21 @@ class EvcilHayvanMotoru:
             sapka = str(bulut_veri.get("secili_sapka") if "secili_sapka" in bulut_veri else (yerel.get("secili_sapka") or ""))
             gozluk = str(bulut_veri.get("secili_gozluk") if "secili_gozluk" in bulut_veri else (yerel.get("secili_gozluk") or ""))
             son_ts = bulut_ts if bulut_ts > 0 else (yerel_ts or time.time())
+            son_fed = float(sayi(bulut_veri.get("last_fed_timestamp"), yerel.get("last_fed_timestamp") or son_ts))
+            if "last_fed_timestamp" not in bulut_veri and float(yerel.get("last_fed_timestamp") or 0.0) > 0:
+                son_fed = min(son_ts, float(yerel["last_fed_timestamp"]))
+            evden_gitti = int(sayi(bulut_veri.get("evden_gitti"), yerel.get("evden_gitti") or 0))
+            if evden_gitti:
+                durum = "GONE"
 
             cur.execute(
                 """UPDATE pet_state
                 SET isim = ?, evrim_asamasi = ?, xp = ?, seviye = ?, yildiz = ?,
                     karbonhidrat = ?, protein = ?, vitamin = ?, mutluluk = ?,
-                    durum = ?, secili_sapka = ?, secili_gozluk = ?, last_active_timestamp = ?
+                    durum = ?, secili_sapka = ?, secili_gozluk = ?, last_active_timestamp = ?,
+                    last_fed_timestamp = ?, evden_gitti = ?
                 WHERE id = 1""",
-                (isim, evrim, xp, seviye, altin, round(karb, 1), round(prot, 1), round(vit, 1), round(mut, 1), durum, sapka, gozluk, son_ts),
+                (isim, evrim, xp, seviye, altin, round(karb, 1), round(prot, 1), round(vit, 1), round(mut, 1), durum, sapka, gozluk, son_ts, son_fed, evden_gitti),
             )
 
             # Envanter eşyalarını birleştir (açılmış eşyalar hiçbir cihazda kaybolmaz)
@@ -678,7 +701,8 @@ class EvcilHayvanMotoru:
                             )
 
             self._conn.commit()
-            return True
+        self.uygula_zaman_asim_kaybi()
+        return True
 
     @staticmethod
     def ders_kategorisi_bul(ders_adi):
@@ -733,6 +757,7 @@ class EvcilHayvanMotoru:
 
     def durum_oku(self, kalan_gun=None):
         """Kedinin güncel durumunu, altın bakiyesini, oda ilerlemesini ve okunmamış mektup sayısını döndürür."""
+        self.uygula_zaman_asim_kaybi()
         with self._lock:
             cur = self._conn.cursor()
             cur.execute("SELECT * FROM pet_state WHERE id = 1")
@@ -757,6 +782,15 @@ class EvcilHayvanMotoru:
             mezuniyet_odasi = len(acik_oda) == len(oda_esyalari) and len(oda_esyalari) > 0
             cur.execute("SELECT COUNT(*) AS c FROM postman_letters WHERE unlocked = 1 AND read_status = 0")
             okunmamis_mektup = int(cur.fetchone()["c"])
+            simdi_z = time.time()
+            son_yemek_ts = float(row.get("last_fed_timestamp") or row.get("last_active_timestamp") or simdi_z)
+            ac_gecen_saat = max(0.0, (simdi_z - son_yemek_ts) / 3600.0)
+            evden_gitti = bool(int(row.get("evden_gitti") or 0)) or (row.get("durum") == "GONE")
+            if evden_gitti:
+                row["durum"] = "GONE"
+            row["evden_gitti"] = evden_gitti
+            row["ac_gecen_saat"] = round(ac_gecen_saat, 1)
+            row["kalan_evden_gitme_saat"] = round(max(0.0, 48.0 - ac_gecen_saat), 1)
             row["altin"] = int(row["yildiz"])
             row["esyalar"] = esyalar
             row["yemekler"] = self.yemek_katalogu_durumu(row["seviye"])
@@ -770,6 +804,7 @@ class EvcilHayvanMotoru:
         ad = (yeni_isim or "").strip()[:24]
         if not ad:
             return False
+        self.uygula_zaman_asim_kaybi()
         with self._lock:
             self._conn.execute("UPDATE pet_state SET isim = ?, last_active_timestamp = ? WHERE id = 1", (ad, time.time()))
             self._conn.commit()
@@ -778,7 +813,8 @@ class EvcilHayvanMotoru:
 
     def uygula_zaman_asim_kaybi(self, simdi_ts=None, saat_kontrol=None):
         """Çevrimdışı geçen her saat için karbonhidrat, protein, vitamin ve mutluluk barlarından
-        %5 düşer (Offline Time Decay). Gece geç saatlerde (23:30 - 06:59) SLEEPING durumuna alır.
+        %5 düşer (Offline Time Decay). 2 gün (48 saat) boyunca hiç yemek verilmezse kedi evden gider (GONE).
+        Gece geç saatlerde (23:30 - 06:59) SLEEPING durumuna alır.
         """
         simdi_ts = float(simdi_ts if simdi_ts is not None else time.time())
         isim = self._isim()
@@ -787,43 +823,72 @@ class EvcilHayvanMotoru:
             cur.execute("SELECT * FROM pet_state WHERE id = 1")
             st = dict(cur.fetchone())
             son_ts = float(st.get("last_active_timestamp") or simdi_ts)
+            son_fed = float(st.get("last_fed_timestamp") or son_ts)
             gecen_saat = max(0.0, (simdi_ts - son_ts) / 3600.0)
+            ac_gecen_saat = max(0.0, (simdi_ts - son_fed) / 3600.0)
             kayip = round(5.0 * gecen_saat, 2) if gecen_saat >= 0.05 else 0.0
+            evden_gitti = int(st.get("evden_gitti") or 0)
+
+            # Henüz 3 dakika (0.05 saat) geçmediyse ve özel saat/evden gitme kontrolü yoksa mevcut durumu (EATING/SAD/HAPPY_JUMP) koru
+            if kayip == 0.0 and saat_kontrol is None and ac_gecen_saat < 48.0 and not evden_gitti:
+                return {
+                    "gecen_saat": round(gecen_saat, 2),
+                    "ac_gecen_saat": round(ac_gecen_saat, 2),
+                    "evden_gitti": False,
+                    "kayip": 0.0,
+                    "karbonhidrat": round(float(st["karbonhidrat"]), 1),
+                    "protein": round(float(st["protein"]), 1),
+                    "vitamin": round(float(st["vitamin"]), 1),
+                    "mutluluk": round(float(st["mutluluk"]), 1),
+                    "durum": str(st["durum"] or "IDLE"),
+                    "mesaj": "",
+                }
 
             karb = max(0.0, min(100.0, float(st["karbonhidrat"]) - kayip))
             prot = max(0.0, min(100.0, float(st["protein"]) - kayip))
             vit = max(0.0, min(100.0, float(st["vitamin"]) - kayip))
             mut = max(0.0, min(100.0, float(st["mutluluk"]) - (kayip * 0.8)))
-
-            if saat_kontrol is None:
-                dt = datetime.fromtimestamp(simdi_ts, ISTANBUL_TZ)
-                gece_mi = (dt.hour == 23 and dt.minute >= 30) or (0 <= dt.hour < 7)
+            if ac_gecen_saat >= 48.0 or evden_gitti:
+                evden_gitti = 1
+                karb, prot, vit, mut = 0.0, 0.0, 0.0, 0.0
+                yeni_durum = "GONE"
+                mesaj = (
+                    f"😿 {st['isim']} 2 gündür hiç yemek yemediği için çok acıktı ve yemek aramak için evden gitti {isim}! "
+                    f"Onu eve geri çağırmak için 🍴 Mutfak'tan hemen yemek ikram et! 🥣🥛"
+                )
             else:
-                gece_mi = bool(saat_kontrol)
+                if saat_kontrol is None:
+                    dt = datetime.fromtimestamp(simdi_ts, ISTANBUL_TZ)
+                    gece_mi = (dt.hour == 23 and dt.minute >= 30) or (0 <= dt.hour < 7)
+                else:
+                    gece_mi = bool(saat_kontrol)
 
-            if gece_mi:
-                yeni_durum = "SLEEPING"
-                mesaj = f"Esniyor... 🥱 Saat geç oldu {isim}, yarına dinç uyanmak için uyku vakti! 🌙💤"
-            elif min(karb, prot, vit) < 25.0:
-                yeni_durum = "HUNGRY"
-                mesaj = f"Miyavv... Karnım çok acıktı {isim}! 🥣 Altınlarınla mutfaktan bana süt veya mama alır mısın? 🥺"
-            elif mut < 25.0:
-                yeni_durum = "SAD"
-                mesaj = f"Enerjim ve neşem düştü {isim}... Beni biraz sevip yemek ısmarlar mısın? 🥺📉"
-            else:
-                yeni_durum = st["durum"] if st["durum"] == "STUDYING" else "IDLE"
-                mesaj = f"Hoş geldin {isim}! Ben {st['isim']}, bugün birlikte çalışıp bol bol 🪙 Altın kazanalım mı? 🐾✨"
+                if gece_mi:
+                    yeni_durum = "SLEEPING"
+                    mesaj = f"Esniyor... 🥱 Saat geç oldu {isim}, yarına dinç uyanmak için uyku vakti! 🌙💤"
+                elif min(karb, prot, vit) < 25.0 or ac_gecen_saat >= 24.0:
+                    yeni_durum = "HUNGRY"
+                    kalan_s = max(1, int(48.0 - ac_gecen_saat))
+                    mesaj = f"Miyavv... Karnım çok acıktı {isim}! ({kalan_s} saat içinde beslemezsen evden gidebilirim 🥺🥣)"
+                elif mut < 25.0:
+                    yeni_durum = "SAD"
+                    mesaj = f"Enerjim ve neşem düştü {isim}... Beni biraz sevip yemek ısmarlar mısın? 🥺📉"
+                else:
+                    yeni_durum = st["durum"] if st["durum"] == "STUDYING" else "IDLE"
+                    mesaj = f"Hoş geldin {isim}! Ben {st['isim']}, bugün birlikte çalışıp bol bol 🪙 Altın kazanalım mı? 🐾✨"
 
             cur.execute(
                 """UPDATE pet_state
                 SET karbonhidrat = ?, protein = ?, vitamin = ?, mutluluk = ?,
-                    durum = ?, last_active_timestamp = ?
+                    durum = ?, last_active_timestamp = ?, evden_gitti = ?
                 WHERE id = 1""",
-                (round(karb, 1), round(prot, 1), round(vit, 1), round(mut, 1), yeni_durum, simdi_ts),
+                (round(karb, 1), round(prot, 1), round(vit, 1), round(mut, 1), yeni_durum, simdi_ts, evden_gitti),
             )
             self._conn.commit()
             sonuc = {
                 "gecen_saat": round(gecen_saat, 2),
+                "ac_gecen_saat": round(ac_gecen_saat, 2),
+                "evden_gitti": bool(evden_gitti),
                 "kayip": kayip,
                 "karbonhidrat": round(karb, 1),
                 "protein": round(prot, 1),
@@ -832,7 +897,7 @@ class EvcilHayvanMotoru:
                 "durum": yeni_durum,
                 "mesaj": mesaj,
             }
-        if kayip > 0 or saat_kontrol is not None:
+        if kayip > 0 or saat_kontrol is not None or evden_gitti:
             self._degisim_bildir()
         return sonuc
 
@@ -843,6 +908,7 @@ class EvcilHayvanMotoru:
         soru_sayisi = max(0, int(soru_sayisi or 0))
         dakika = max(0, int(dakika or 0))
         simdi_ts = float(simdi_ts if simdi_ts is not None else time.time())
+        self.uygula_zaman_asim_kaybi(simdi_ts=simdi_ts)
         tarih_str = tarih_str or datetime.fromtimestamp(simdi_ts, ISTANBUL_TZ).strftime("%Y-%m-%d")
         kategori = self.ders_kategorisi_bul(ders_adi)
         isim = self._isim()
@@ -917,6 +983,7 @@ class EvcilHayvanMotoru:
     def yemekle_besle(self, yemek_id, simdi_ts=None):
         """Kediyi doyurmak için 🪙 Altın harcayarak yemek satın alır ve besin barlarını doldurur."""
         simdi_ts = float(simdi_ts if simdi_ts is not None else time.time())
+        self.uygula_zaman_asim_kaybi(simdi_ts=simdi_ts)
         yemek = next((y for y in EVCIL_YEMEK_KATALOGU if y["item_id"] == yemek_id), None)
         if yemek is None:
             return False, "Yemek bulunamadı!"
@@ -937,20 +1004,30 @@ class EvcilHayvanMotoru:
                 return False, f"Yeterli altının yok {isim}! ({fiyat} 🪙 Altın gerekiyor, sende {mevcut_altin} 🪙 var)"
 
             yeni_altin = mevcut_altin - fiyat
-            karb = min(100.0, float(st["karbonhidrat"]) + float(yemek["karb"]))
-            prot = min(100.0, float(st["protein"]) + float(yemek["prot"]))
-            vit = min(100.0, float(st["vitamin"]) + float(yemek["vit"]))
-            mut = min(100.0, float(st["mutluluk"]) + float(yemek["mut"]))
+            evden_gitti_mi = bool(int(st.get("evden_gitti") or 0)) or (st.get("durum") == "GONE")
+            baz_k = 30.0 if evden_gitti_mi else float(st["karbonhidrat"])
+            baz_p = 30.0 if evden_gitti_mi else float(st["protein"])
+            baz_v = 30.0 if evden_gitti_mi else float(st["vitamin"])
+            baz_m = 45.0 if evden_gitti_mi else float(st["mutluluk"])
+            karb = min(100.0, baz_k + float(yemek["karb"]))
+            prot = min(100.0, baz_p + float(yemek["prot"]))
+            vit = min(100.0, baz_v + float(yemek["vit"]))
+            mut = min(100.0, baz_m + float(yemek["mut"]))
 
             cur.execute(
                 """UPDATE pet_state
                 SET yildiz = ?, karbonhidrat = ?, protein = ?, vitamin = ?, mutluluk = ?,
-                    durum = 'EATING', last_active_timestamp = ?
+                    durum = 'EATING', last_active_timestamp = ?, last_fed_timestamp = ?, evden_gitti = 0
                 WHERE id = 1""",
-                (yeni_altin, round(karb, 1), round(prot, 1), round(vit, 1), round(mut, 1), simdi_ts),
+                (yeni_altin, round(karb, 1), round(prot, 1), round(vit, 1), round(mut, 1), simdi_ts, simdi_ts),
             )
             self._conn.commit()
         self._degisim_bildir()
+        if evden_gitti_mi:
+            return (
+                True,
+                f"🐾 {st['isim']} yemeğin kokusunu alıp koşarak eve geri döndü {isim}! ({yemek['emoji']} {yemek['ad']} yedi • -{fiyat} 🪙 Altın)",
+            )
         return (
             True,
             f"Nam nam! 😋 {yemek['emoji']} {yemek['ad']} çok lezzetliydi {isim}, karnım doydu! (-{fiyat} 🪙 Altın)",
@@ -999,6 +1076,7 @@ class EvcilHayvanMotoru:
         return False, ""
 
     def pomodoro_basladi(self, ders_adi="Matematik"):
+        self.uygula_zaman_asim_kaybi()
         isim = self._isim()
         with self._lock:
             self._conn.execute(
@@ -1010,7 +1088,14 @@ class EvcilHayvanMotoru:
         return f"Gözlüklerimi taktım, masama oturdum! 🤓✏️ Sen {ders_adi} çözerken ben de yanındayım {isim}, tam odak!"
 
     def pomodoro_tikla_tepki(self, calisiyor_mu=False, gece_mi=False):
+        self.uygula_zaman_asim_kaybi()
         isim = self._isim()
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("SELECT isim, evden_gitti, durum FROM pet_state WHERE id = 1")
+            st = dict(cur.fetchone())
+            if int(st.get("evden_gitti") or 0) or st.get("durum") == "GONE":
+                return f"😿 {st['isim']} şu an evde değil {isim}! 2 gün yemek yemediği için evden gitti; 🍴 Mutfak'tan yemek ikram ederek onu eve geri çağırabilirsin!"
         if calisiyor_mu:
             return self._benzersiz_sec(POMODORO_ODAK_SOZLERI)
         if gece_mi:
@@ -1028,6 +1113,7 @@ class EvcilHayvanMotoru:
         return self._benzersiz_sec(TOM_ETKILESIM_SOZLERI)
 
     def soru_cevapla(self, soru_metni=""):
+        self.uygula_zaman_asim_kaybi()
         soru = str(soru_metni or "").strip()
         with self._lock:
             self._conn.execute(
@@ -1050,6 +1136,7 @@ class EvcilHayvanMotoru:
         return self._benzersiz_sec(birlesik)
 
     def pomodoro_molasi(self, dakika=25, ders_adi="Matematik", tarih_str=None):
+        self.uygula_zaman_asim_kaybi()
         isim = self._isim()
         odul = self.besle_ders_ile(ders_adi, soru_sayisi=max(10, dakika // 2), dakika=dakika, tarih_str=tarih_str)
         with self._lock:
@@ -1062,6 +1149,7 @@ class EvcilHayvanMotoru:
         )
 
     def pomodoro_bozuldu(self):
+        self.uygula_zaman_asim_kaybi()
         isim = self._isim()
         with self._lock:
             self._conn.execute(
@@ -1075,7 +1163,14 @@ class EvcilHayvanMotoru:
         return f"Ahh! Kafama dev bir silgi düştü, bütün kağıtlarım etrafa saçıldı! 📄💥 Pomodoro'yu yarıda bırakınca çok üzüldüm {isim}... 🥺"
 
     def oksa_sev(self):
+        self.uygula_zaman_asim_kaybi()
+        isim = self._isim()
         with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("SELECT isim, evden_gitti, durum FROM pet_state WHERE id = 1")
+            st = dict(cur.fetchone())
+            if int(st.get("evden_gitti") or 0) or st.get("durum") == "GONE":
+                return f"😿 {st['isim']} 2 gündür yemek yemediği için evden gitti {isim}! Onu geri getirmek için 🍴 Mutfak'tan yemek ver!"
             self._conn.execute(
                 """UPDATE pet_state
                 SET mutluluk = MIN(100.0, mutluluk + 6.0),
@@ -1089,6 +1184,7 @@ class EvcilHayvanMotoru:
 
     def esya_islem(self, item_id):
         """Mağazadan eşya/ödül satın alır veya zaten alınmış aksesuarı takıp çıkarır (Altın ile)."""
+        self.uygula_zaman_asim_kaybi()
         isim = self._isim()
         simdi = time.time()
         with self._lock:
@@ -1139,9 +1235,9 @@ class EvcilHayvanMotoru:
                 cur.execute(
                     """UPDATE pet_state
                     SET yildiz = ?, karbonhidrat = ?, protein = ?, vitamin = ?, mutluluk = ?,
-                        durum = 'EATING', last_active_timestamp = ?
+                        durum = 'EATING', last_active_timestamp = ?, last_fed_timestamp = ?, evden_gitti = 0
                     WHERE id = 1""",
-                    (yeni_altin, round(karb, 1), round(prot, 1), round(vit, 1), round(mut, 1), simdi),
+                    (yeni_altin, round(karb, 1), round(prot, 1), round(vit, 1), round(mut, 1), simdi, simdi),
                 )
                 self._conn.commit()
                 self._degisim_bildir()

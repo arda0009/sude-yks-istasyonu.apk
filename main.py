@@ -295,23 +295,30 @@ def main(page: ft.Page):
         "mektup_hedef": 0,
         "acik_mektup": None,
         "son_excel_bilgi": None,
-        "secili_netler": set(),                   # Seçilen deneme indeksleri (silme / kopyalama için)
-        "net_kopyala_acik": False,                # Farklı hesaba kopyalama paneli açık mı
-        "net_kopyala_hedef": "",                  # Denemelerin kopyalanacağı hedef kullanıcı adı
+        "secili_netler": set(),                   # Seçilen deneme indeksleri (silme için)
+        "duzenlenen_net_idx": None,               # Düzenlenen denemenin DB['netler'] içindeki indeksi
+        "panel_kopya_kaynak": None,               # Panelde denemeleri kopyalanacak kaynak öğrenci
+        "panel_kopya_hedef": "",                  # Panelde denemelerin kopyalanacağı hedef öğrenci
+        "panel_secili_netler": set(),             # Panelde seçilen deneme indeksleri
+        "panel_net_sinav": "TYT",                 # Paneldeki deneme kopyalama sınav filtresi
         "panel_gs_filtre": 0,                     # 0: Tümü, 1..5: Performans puanı filtresi
         "panel_gs_arama": "",
         "ilk_ders_paylasim_acik": False,          # Günün ilk dersine başlarken açılan fotoğraf/açıklama paylaşım ekranı
+        "oda_secili_uye": None,                   # Canlı Çalışma Odası'nda tıklanan üye
         "_anahtar": None,
     }
     oyun = {"xox": [""] * 9, "xox_kazanan": None}
     zm = {
         "mod": "krono", "durum": "bos", "birikmis": 0.0, "t0": None, "son_kayit": 0,
+        "son_su_saat": 0,                         # Kronometrede her 1 saatte (3600 sn) su bildirimi takibi
         "label": ft.Text("00:00:00", size=44, weight=ft.FontWeight.W_800),
         "ring": ft.ProgressRing(value=0.0, width=240, height=240, stroke_width=12),
         "durum_txt": ft.Text("Odaklanmaya Hazır", size=13, weight=ft.FontWeight.W_600),
         "bugun_txt": ft.Text("0 dk", size=18, weight=ft.FontWeight.W_800),
         "toplam_txt": ft.Text("0 dk", size=18, weight=ft.FontWeight.W_800),
         "ust_rozet_txt": ft.Text("00:00:00", size=13, weight=ft.FontWeight.W_800),
+        "oda_odak_txt": ft.Text("0:00:00", size=28, weight=ft.FontWeight.W_800, color="#F3E8EE"),
+        "oda_bugun_txt": ft.Text("0:00:00", size=12, weight=ft.FontWeight.W_700, color="#F49EC0"),
         "thread": None, "async_aktif": False, "bildirildi": False,
     }
     gk = {
@@ -546,9 +553,9 @@ def main(page: ft.Page):
 
     def kart(r, icerik, padding=18, border=None, **kw):
         return ft.Container(
-            bgcolor=r["card_bg"], border_radius=22, padding=padding,
-            border=border or kenar(1, r["border"]),
-            shadow=ft.BoxShadow(blur_radius=14, color=opak(0.06, "#000000"), offset=ft.Offset(0, 4)),
+            bgcolor=r["card_bg"], border_radius=24, padding=padding,
+            border=border or kenar(1, opak(0.75, r["border"])),
+            shadow=ft.BoxShadow(blur_radius=18, color=opak(0.04, "#000000"), offset=ft.Offset(0, 4)),
             content=icerik, **kw
         )
 
@@ -558,7 +565,7 @@ def main(page: ft.Page):
             bgcolor=r["card_bg"] if ikincil else r["hdr"],
             color=r["hdr"] if ikincil else okunur_renk(r["hdr"]),
             style=ft.ButtonStyle(
-                shape=ft.RoundedRectangleBorder(radius=14),
+                shape=ft.RoundedRectangleBorder(radius=16),
                 side=ft.BorderSide(1, r["border"]) if ikincil else None,
                 elevation=0,
             ),
@@ -567,7 +574,7 @@ def main(page: ft.Page):
     def girdi(r, ipucu="", **kw):
         return ft.TextField(
             hint_text=ipucu, bgcolor=r["bg"], border_color=r["border"], focused_border_color=r["hdr"],
-            color=r["txt"], cursor_color=r["hdr"], content_padding=15, border_radius=14,
+            color=r["txt"], cursor_color=r["hdr"], content_padding=15, border_radius=16,
             hint_style=ft.TextStyle(color=r["muted"]), label_style=ft.TextStyle(color=r["muted"]), **kw
         )
 
@@ -1068,6 +1075,8 @@ def main(page: ft.Page):
 
     def evcil_aktif_sahne_anahtari(st):
         """Mevcut çalışma, uyku, açlık ve duygu durumuna göre hangi 3D fotoğraf sahnesinin gösterileceğini belirler."""
+        if bool(st.get("evden_gitti")) or st.get("durum") == "GONE":
+            return "GONE"
         if zm["durum"] == "calisiyor":
             return "STUDYING"
         if bool(ui.get("evcil_uyku_isik")) or st.get("durum") == "SLEEPING":
@@ -1201,6 +1210,7 @@ def main(page: ft.Page):
             "baslangic_ts": float(zm["t0"]) if (zm["durum"] == "calisiyor" and zm.get("t0") is not None) else 0.0,
             "birikmis_sn": int(round(float(zm.get("birikmis") or 0.0))),
             "son_kayit_sn": int(zm.get("son_kayit") or 0),
+            "son_su_saat": int(zm.get("son_su_saat") or 0),
             "tarih": bugun_str(),
             "ders": ui.get("pomo_ders_kat", "Matematik (Protein)"),
         }
@@ -1229,6 +1239,7 @@ def main(page: ft.Page):
         zm["mod"] = s.get("mod", "krono")
         zm["birikmis"] = float(sayi(s.get("birikmis_sn"), 0.0))
         zm["son_kayit"] = int(sayi(s.get("son_kayit_sn"), 0))
+        zm["son_su_saat"] = int(sayi(s.get("son_su_saat"), 0))
         if s.get("ders"):
             ui["pomo_ders_kat"] = s["ders"]
         ts = float(sayi(s.get("baslangic_ts"), 0.0))
@@ -1253,22 +1264,60 @@ def main(page: ft.Page):
             return min(g / (25 * 60), 1.0)
         return (g % 3600) / 3600.0
 
+    def oda_sure_metni(sn_deger):
+        sn_i = max(0, int(sn_deger or 0))
+        return f"{sn_i // 3600}:{(sn_i % 3600) // 60:02d}:{sn_i % 60:02d}"
+
+    def kronometre_su_bildirim_kontrol(senkron=False):
+        """Kronometre çalışırken geçen her 1 saatte (3600 sn) bir su içme bildirimi gönderir."""
+        if zm.get("durum") != "calisiyor":
+            return False
+        g_sn = gecen_sn()
+        saat_sayisi = int(g_sn // 3600)
+        son_bildirilen = int(zm.get("son_su_saat") or 0)
+        if saat_sayisi >= 1 and saat_sayisi > son_bildirilen:
+            zm["son_su_saat"] = saat_sayisi
+            aktif_sayac_kaydet()
+            kul = kullanici_adi() or "Şampiyon"
+            baslik = f"💧 {saat_sayisi} Saattir Çalışıyorsun: Su İçme Zamanı!"
+            mesaj = f"Harika odaklandın {kul}! Tam {saat_sayisi} saat oldu, zihnini tazelemek için şimdi 1 bardak su içmeyi unutma 💧✨"
+            snack(f"{baslik} — {mesaj}")
+
+            def _ntfy_su():
+                try:
+                    b_ayar = DB.get("bildirim") or {}
+                    if b_ayar.get("aktif", True) and b_ayar.get("su", True) and b_ayar.get("konu"):
+                        ntfy_gonder(b_ayar["konu"], baslik, mesaj, 4)
+                except Exception:
+                    pass
+
+            if senkron:
+                _ntfy_su()
+            else:
+                arka_plan(_ntfy_su)
+            return True
+        return False
+
     def _sayac_ui_tik_uygula():
         """Sayacın ekrandaki metin ve halka kontrollerini yerinde günceller (Flet 0.2x ve 1.0 tam uyumlu)."""
         if zm["mod"] == "pomo" and gecen_sn() >= 25 * 60 and not zm["bildirildi"]:
             zm["bildirildi"] = True
             snack("🍅 Pomodoro bitti! Bitir'e basıp süreni ve yoldaş ödülünü kaydedebilirsin.")
-        if kok.content is not ui_kapsayici or ui["sekme"] != 1 or int(ui.get("calis_tab") or 0) != 0:
+        kronometre_su_bildirim_kontrol()
+        if kok.content is not ui_kapsayici or ui["sekme"] != 1:
             return
         with ui_kilit:
             z_txt = zaman_metni()
             h_deg = halka_degeri()
             canli_ek = canli_eklenmemis_sn()
+            bugun_toplam_sn = gun_sn(bugun_str()) + canli_ek
             lbl = zm.get("label")
             rng = zm.get("ring")
             ust_r = zm.get("ust_rozet_txt")
             b_txt = zm.get("bugun_txt")
             t_txt = zm.get("toplam_txt")
+            oda_o = zm.get("oda_odak_txt")
+            oda_b = zm.get("oda_bugun_txt")
             if lbl is not None:
                 lbl.value = z_txt
                 try:
@@ -1288,7 +1337,7 @@ def main(page: ft.Page):
                 except Exception:
                     pass
             if b_txt is not None:
-                b_txt.value = sn_metni(gun_sn(bugun_str()) + canli_ek)
+                b_txt.value = sn_metni(bugun_toplam_sn)
                 try:
                     b_txt.update()
                 except Exception:
@@ -1297,6 +1346,18 @@ def main(page: ft.Page):
                 t_txt.value = sn_metni(toplam_sn() + canli_ek)
                 try:
                     t_txt.update()
+                except Exception:
+                    pass
+            if oda_o is not None:
+                oda_o.value = oda_sure_metni(gecen_sn())
+                try:
+                    oda_o.update()
+                except Exception:
+                    pass
+            if oda_b is not None:
+                oda_b.value = oda_sure_metni(bugun_toplam_sn)
+                try:
+                    oda_b.update()
                 except Exception:
                     pass
             try:
@@ -1403,14 +1464,15 @@ def main(page: ft.Page):
         """Çalışan/duraklatılmış oturumun başlangıç zamanıyla şu an arasındaki farkı bugüne ekler ve sıfırlar."""
         toplam = gecen_sn()
         sayac_farkini_ekle()
-        zm.update({"durum": "bos", "birikmis": 0.0, "t0": None, "son_kayit": 0, "bildirildi": False})
+        zm.update({"durum": "bos", "birikmis": 0.0, "t0": None, "son_kayit": 0, "son_su_saat": 0, "bildirildi": False})
         aktif_sayac_kaydet()
         return toplam
 
     aktif_sayac_yukle()
 
-    def ilk_ders_paylasim_karti_olustur(r, kapat_fn=None):
-        """Günün ilk dersine başlarken (kronometre çalıştırıldığında) açılan fotoğraf + açıklama paylaşım ekranı."""
+    def ilk_ders_paylasim_karti_olustur(r, kapat_fn=None, sayac_bekliyor=False):
+        """Günün ilk dersine başlarken açılan fotoğraf + açıklama paylaşım ekranı.
+        Fotoğraf koymak zorunludur; fotoğraf seçilip paylaşılmadan kronometre başlamaz."""
         bugun_t = bugun_str()
         baslama_s = (DB.get("gun") or {}).get("baslama") or datetime.now().strftime("%H:%M")
 
@@ -1432,7 +1494,7 @@ def main(page: ft.Page):
             sosyal["yeni_foto"] = evcil_sahne_b64_getir("STUDYING", evrim_asamasi=st_k.get("evrim_asamasi", "BEBEK"))
             sosyal["foto_mesaj"] = ""
             yenile()
-            snack("🐾 Çalışma masası fotoğrafı eklendi!")
+            snack("🐾 Çalışma fotoğrafı eklendi! Şimdi Paylaş ve Kronometreyi Başlat'a basabilirsin.")
 
         def aciklama_degisti(e):
             sosyal["yeni_aciklama"] = e.control.value or ""
@@ -1441,17 +1503,31 @@ def main(page: ft.Page):
             aciklama_v = (sosyal.get("yeni_aciklama") or "").strip()
             foto_v = sosyal.get("yeni_foto")
             if not foto_v:
-                st_k = evcil_motor.durum_oku()
-                foto_v = evcil_sahne_b64_getir("STUDYING", evrim_asamasi=st_k.get("evrim_asamasi", "BEBEK"))
+                sosyal["foto_mesaj"] = "⚠️ Derse başlamadan önce fotoğraf eklemen zorunlu! Lütfen fotoğraf seç/çek."
+                yenile()
+                snack("⚠️ Fotoğraf koymadan kronometre başlamaz! Lütfen önce ders fotoğrafını seç.")
+                return
+            gun_baslangicini_kaydet()
             ders_baslangic_postu_olustur(foto_v, aciklama_v)
             sosyal["yeni_foto"] = None
             sosyal["yeni_aciklama"] = ""
             sosyal["foto_mesaj"] = ""
             ui["ilk_ders_paylasim_acik"] = False
             ui["sosyal_ek_paylasim_acik"] = False
-            yenile()
+            # Eğer kronometre fotoğraf paylaşımını bekliyorsa şimdi başlat!
+            if sayac_bekliyor or zm.get("durum") == "bos":
+                simdi_ts = time.time()
+                zm.update({"durum": "calisiyor", "birikmis": 0.0, "t0": simdi_ts, "son_kayit": 0, "son_su_saat": 0, "bildirildi": False})
+                aktif_sayac_kaydet()
+                soz = evcil_motor.pomodoro_basladi(ui["pomo_ders_kat"])
+                evcil_ui["mesaj"] = soz
+                yenile()
+                tik_baslat()
+                evcil_konustur(soz)
+            else:
+                yenile()
             kutlama()
-            snack(f"📸 {bugun_t} • Ders Başlangıç Paylaşımı Sosyal Medya'da yayınlandı! İyi çalışmalar 🔥")
+            snack(f"📸 {bugun_t} • Ders Başlangıç Paylaşımı yayınlandı ve Kronometre başlatıldı! İyi çalışmalar 🔥")
 
         gn = min(300, max(190, int((page.width or 380) - 56)))
         onizleme = []
@@ -1462,14 +1538,15 @@ def main(page: ft.Page):
                 content=resim_olustur(sosyal["yeni_foto"], width=gn, height=gn),
             ))
         if sosyal.get("foto_mesaj"):
-            onizleme.append(ft.Text(sosyal["foto_mesaj"], size=12, color=KIRMIZI))
+            onizleme.append(ft.Text(sosyal["foto_mesaj"], size=12, weight=ft.FontWeight.W_700, color=KIRMIZI))
 
+        ana_buton_metni = "📸 Paylaş ve Kronometreyi Başlat 🔥" if (sayac_bekliyor or zm.get("durum") == "bos") else "📸 Paylaş ve Derse Devam Et"
         alt_butonlar = [
-            buton(r, "📸 Paylaş ve Derse Devam Et", paylas_ve_devam_et, ikon=ik("SEND"), genis=True, yukseklik=48),
+            buton(r, ana_buton_metni, paylas_ve_devam_et, ikon=ik("PLAY_ARROW") if sayac_bekliyor else ik("SEND"), genis=True, yukseklik=48),
         ]
         if kapat_fn is not None:
             alt_butonlar.append(
-                buton(r, "Şimdilik Geç (Sayaca Dön)", kapat_fn, ikincil=True, genis=True, yukseklik=40)
+                buton(r, "Vazgeç (Kronometreyi Başlatma)" if sayac_bekliyor else "Vazgeç", kapat_fn, ikincil=True, genis=True, yukseklik=40)
             )
 
         return kart(r, ft.Column([
@@ -1479,22 +1556,22 @@ def main(page: ft.Page):
                     content=ft.Text("📸", size=22),
                 ),
                 ft.Column([
-                    ft.Text("Günün İlk Dersi Başladı!", size=16, weight=ft.FontWeight.W_800, color=r["hdr"]),
-                    ft.Text("Fotoğrafını ekle, açıklamanı yaz; Sosyal Medya'da paylaşılsın!", size=12, color=r["muted"]),
+                    ft.Text("Derse Başlamak İçin Fotoğraf Ekle!", size=16, weight=ft.FontWeight.W_800, color=r["hdr"]),
+                    ft.Text("Fotoğraf koymadan kronometre başlamaz. Fotoğrafını seçip açıklamanı yaz!", size=12, color=r["muted"]),
                 ], spacing=2, expand=True),
             ], spacing=10),
             ft.Container(
                 padding=pad_sim(horizontal=12, vertical=8), border_radius=12,
                 bgcolor=opak(0.14, r["accent"]), border=kenar(1, r["accent"]),
                 content=ft.Row([
-                    ft.Text(f"📅 {bugun_t} • 🌅 Başlangıç: {baslama_s} • 📚 Ders Başlangıç Paylaşımı",
+                    ft.Text(f"📅 {bugun_t} • 🌅 Başlangıç: {baslama_s} • 📚 Ders Başlangıç Paylaşımı (Zorunlu)",
                             size=12, weight=ft.FontWeight.W_800, color=r["txt"], expand=True),
                 ]),
             ),
             *([ft.Column(onizleme, horizontal_alignment=ft.CrossAxisAlignment.CENTER)] if onizleme else []),
             buton(
                 r,
-                "📷 Fotoğrafı Değiştir" if sosyal.get("yeni_foto") else "📷 Ders Fotoğrafı Seç / Çek",
+                "📷 Fotoğrafı Değiştir ✅" if sosyal.get("yeni_foto") else "📷 Ders Fotoğrafı Seç / Çek (Zorunlu)",
                 foto_sec_tikla,
                 ikon=ik("ADD_PHOTO_ALTERNATE"),
                 genis=True,
@@ -1503,7 +1580,7 @@ def main(page: ft.Page):
             ),
             buton(
                 r,
-                "🐾 Hazır Çalışma Masası Fotoğrafı Ekle",
+                "🐾 Kamera Açılmazsa Masa Fotoğrafı Seç",
                 hazir_masa_fotosu_kullan,
                 ikincil=True,
                 genis=True,
@@ -1529,35 +1606,364 @@ def main(page: ft.Page):
             *alt_butonlar,
         ], spacing=10), padding=16, border=kenar(2, r["hdr"]))
 
+    def canli_calisma_odasi_cek(zorla=False, senkron=False):
+        """Buluttaki tüm öğrencilerin anlık çalışma durumunu ve bugünkü sürelerini çeker (Kütüphane için)."""
+        simdi_z = time.time()
+        if not zorla and panel["son_cek"] > 0 and (simdi_z - panel["son_cek"]) < 5.0 and panel.get("veri"):
+            return panel["veri"]
+
+        def _cek():
+            try:
+                users = bulut_oku() or {}
+                if isinstance(users, dict) and users:
+                    panel["veri"] = users
+                    panel["son_cek"] = time.time()
+            except Exception:
+                pass
+
+        if senkron:
+            _cek()
+        else:
+            def _arka():
+                _cek()
+                if kok.content is ui_kapsayici and ui["sekme"] == 1 and int(ui.get("calis_tab") or 0) == 1:
+                    yenile()
+            arka_plan(_arka)
+        return panel.get("veri") or {}
+
+    def masa_svg_b64_olustur(durum_kod="bos", renk_hex="#C8B6C2", vurgu_hex="#E86C8D", uyari_rozet=False, saat_rozet=False):
+        """Kütüphane bölümündeki öğrenci çalışma masası & masa lambası ikonlarını temaya uyumlu SVG olarak üretir."""
+        ust_ek = ""
+        if uyari_rozet:
+            ust_ek = (
+                f'<rect x="14" y="6" width="22" height="17" rx="4" fill="none" stroke="{vurgu_hex}" stroke-width="2.4"/>'
+                f'<line x1="25" y1="10" x2="25" y2="15" stroke="{vurgu_hex}" stroke-width="2.4" stroke-linecap="round"/>'
+                f'<circle cx="25" cy="19" r="1.4" fill="{vurgu_hex}"/>'
+            )
+        elif saat_rozet:
+            ust_ek = (
+                f'<circle cx="24" cy="15" r="8" fill="none" stroke="{renk_hex}" stroke-width="2.2"/>'
+                f'<polyline points="24,10 24,15 28,15" fill="none" stroke="{renk_hex}" stroke-width="2" stroke-linecap="round"/>'
+            )
+
+        if durum_kod == "calisiyor_avatar":
+            ic_svg = (
+                f'<circle cx="50" cy="40" r="24" fill="{opak(0.18, vurgu_hex)}" stroke="{vurgu_hex}" stroke-width="2.2"/>'
+                f'<path d="M26 38 A24 24 0 0 1 74 38" fill="none" stroke="{vurgu_hex}" stroke-width="5" stroke-dasharray="6 4"/>'
+                '<circle cx="50" cy="36" r="11" fill="#FBD38D"/>'
+                '<path d="M38 35 Q50 22 62 35" fill="#744210"/>'
+                '<circle cx="46" cy="36" r="1.6" fill="#2D3748"/>'
+                '<circle cx="54" cy="36" r="1.6" fill="#2D3748"/>'
+                '<path d="M47 41 Q50 43 53 41" fill="none" stroke="#2D3748" stroke-width="1.6" stroke-linecap="round"/>'
+                '<path d="M35 58 Q50 46 65 58" fill="#48BB78"/>'
+                f'<rect x="24" y="57" width="52" height="6" rx="3" fill="{vurgu_hex}"/>'
+                '<rect x="33" y="53" width="16" height="4" rx="1.5" fill="#63B3ED"/>'
+                f'<rect x="52" y="53" width="15" height="4" rx="1.5" fill="{renk_hex}"/>'
+            )
+        elif durum_kod == "calisiyor_renkli":
+            ic_svg = (
+                f'{ust_ek}'
+                f'<circle cx="38" cy="34" r="7.5" fill="none" stroke="{vurgu_hex}" stroke-width="2.6"/>'
+                f'<line x1="33" y1="31" x2="43" y2="37" stroke="{vurgu_hex}" stroke-width="2"/>'
+                f'<path d="M28 50 Q38 41 48 50" fill="none" stroke="{vurgu_hex}" stroke-width="2.8" stroke-linecap="round"/>'
+                f'<line x1="33" y1="16" x2="36" y2="21" stroke="{vurgu_hex}" stroke-width="2" stroke-linecap="round"/>'
+                f'<line x1="39" y1="14" x2="41" y2="20" stroke="{vurgu_hex}" stroke-width="2" stroke-linecap="round"/>'
+                f'<polygon points="56,24 70,24 73,34 53,34" fill="none" stroke="{vurgu_hex}" stroke-width="2.5" stroke-linejoin="round"/>'
+                f'<line x1="63" y1="34" x2="63" y2="50" stroke="{vurgu_hex}" stroke-width="2.6"/>'
+                f'<line x1="20" y1="50" x2="80" y2="50" stroke="{vurgu_hex}" stroke-width="3" stroke-linecap="round"/>'
+                f'<line x1="25" y1="50" x2="25" y2="66" stroke="{vurgu_hex}" stroke-width="2.8" stroke-linecap="round"/>'
+                f'<line x1="75" y1="50" x2="75" y2="66" stroke="{vurgu_hex}" stroke-width="2.8" stroke-linecap="round"/>'
+                f'<line x1="25" y1="57" x2="75" y2="57" stroke="{vurgu_hex}" stroke-width="2.4"/>'
+            )
+        else:
+            ic_svg = (
+                f'{ust_ek}'
+                f'<polygon points="56,22 70,22 73,32 53,32" fill="none" stroke="{renk_hex}" stroke-width="2.4" stroke-linejoin="round"/>'
+                f'<line x1="63" y1="32" x2="63" y2="48" stroke="{renk_hex}" stroke-width="2.4"/>'
+                f'<line x1="22" y1="48" x2="78" y2="48" stroke="{renk_hex}" stroke-width="2.8" stroke-linecap="round"/>'
+                f'<line x1="26" y1="48" x2="26" y2="65" stroke="{renk_hex}" stroke-width="2.6" stroke-linecap="round"/>'
+                f'<line x1="74" y1="48" x2="74" y2="65" stroke="{renk_hex}" stroke-width="2.6" stroke-linecap="round"/>'
+                f'<line x1="26" y1="55" x2="74" y2="55" stroke="{renk_hex}" stroke-width="2.2"/>'
+            )
+
+        svg_str = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 76">{ic_svg}</svg>'
+        return f"data:image/svg+xml;base64,{base64.b64encode(svg_str.encode('utf-8')).decode('ascii')}"
+
+    def canli_calisma_odasi_olustur(r, ust_sekme_cubugu, baslat_fn, duraklat_fn, devam_fn):
+        """Kütüphane sekmesi: Yalnızca uygulamanın gerçek kayıtlı kullanıcılarını gösterir.
+        Aktif çalışanlar temanın canlı rengiyle, çalışmayanlar soluk renkle gösterilir;
+        her öğrencinin kronometreden gelen çalışma süresi anlık olarak güncellenir."""
+        if not panel.get("veri") or (time.time() - panel.get("son_cek", 0) > 6.0):
+            canli_calisma_odasi_cek(zorla=False, senkron=not bool(panel.get("veri")))
+
+        bugun_t = bugun_str()
+        ben_k = (kullanici_adi() or "sude").strip().lower()
+        ben_aktif = (zm["durum"] == "calisiyor")
+        ben_odak_sn = gecen_sn()
+        ben_bugun_sn = gun_sn(bugun_t) + canli_eklenmemis_sn()
+
+        zm["oda_odak_txt"].value = oda_sure_metni(ben_odak_sn)
+        zm["oda_odak_txt"].color = r["txt"]
+        zm["oda_bugun_txt"].value = oda_sure_metni(ben_bugun_sn)
+        zm["oda_bugun_txt"].color = r["hdr"]
+
+        # YALNIZCA buluttaki gerçek kayıtlı kullanıcılarımızı ve giriş yapmış kullanıcıyı listele
+        users_bulut = panel.get("veri") or {}
+        uyeler_map = {}
+
+        for u_ad, u_veri in users_bulut.items():
+            if not isinstance(u_veri, dict):
+                continue
+            u_low = str(u_ad).strip().lower()
+            sn_t = bulut_coz("calisma_sn", u_veri.get("calisma_sn") or {})
+            log_t = bulut_coz("calisma_log", u_veri.get("calisma_log") or {})
+            u_bugun_sn = int(sayi(sn_t.get(bugun_t))) + int(sayi(log_t.get(bugun_t))) * 60
+            akt_s = u_veri.get("aktif_sayac") if isinstance(u_veri.get("aktif_sayac"), dict) else {}
+            u_calisiyor = (akt_s.get("durum") == "calisiyor")
+            u_oturum_sn = 0
+            if u_calisiyor and float(sayi(akt_s.get("baslangic_ts"), 0.0)) > 0:
+                u_oturum_sn = max(0, int(time.time() - float(akt_s["baslangic_ts"])) + int(sayi(akt_s.get("birikmis_sn"), 0)))
+                canli_f = max(0, u_oturum_sn - int(sayi(akt_s.get("son_kayit_sn"), 0)))
+                u_bugun_sn += canli_f
+            elif akt_s.get("durum") == "durakladi":
+                u_oturum_sn = int(sayi(akt_s.get("birikmis_sn"), 0))
+            uyeler_map[u_low] = {
+                "ad": u_ad,
+                "sn": u_bugun_sn,
+                "oturum_sn": u_oturum_sn,
+                "calisiyor": u_calisiyor,
+                "ders": akt_s.get("ders") or "YKS Odak",
+                "ben": (u_low == ben_k),
+            }
+
+        # Giriş yapmış kullanıcının kendi anlık kronometre verisini her zaman en güncel haliyle yaz
+        uyeler_map[ben_k] = {
+            "ad": kullanici_adi() or "Sude",
+            "sn": ben_bugun_sn,
+            "oturum_sn": ben_odak_sn,
+            "calisiyor": ben_aktif,
+            "ders": ui.get("pomo_ders_kat", "Matematik"),
+            "ben": True,
+        }
+
+        # Sıralama: Önce aktif çalışanlar ve bugünkü çalışma süresi yüksek olanlar
+        sirali_uyeler = sorted(
+            uyeler_map.values(),
+            key=lambda x: (not bool(x.get("calisiyor")), -int(x.get("sn") or 0), str(x.get("ad") or "").lower()),
+        )
+        calisan_sayisi = sum(1 for u in sirali_uyeler if u.get("calisiyor"))
+
+        def sayac_oynat_duraklat(e):
+            if zm["durum"] == "calisiyor":
+                duraklat_fn(e)
+            elif zm["durum"] == "durakladi":
+                devam_fn(e)
+            else:
+                baslat_fn(e)
+
+        def uye_masa_tikla(u_bilgi):
+            def f(e):
+                ui["oda_secili_uye"] = u_bilgi
+                durum_str = f"🔥 Şu an çalışıyor (Oturum: {oda_sure_metni(u_bilgi.get('oturum_sn', 0))})" if u_bilgi.get("calisiyor") else "⏸ Şu an çalışmıyor"
+                snack(f"📚 {u_bilgi['ad']} • Bugün Toplam: {oda_sure_metni(u_bilgi['sn'])} • {durum_str}")
+                yenile()
+            return f
+
+        # 1) ÜST BAR (Temaya tam uyumlu): Sol üstte "Mevcut odaklanma süresi" + sayaç + (|| / ▶), sağ üstte avatar + bugün toplam
+        sag_avatar_svg = masa_svg_b64_olustur("calisiyor_avatar", renk_hex=r["accent"], vurgu_hex=r["hdr"])
+        ust_odak_bari = kart(
+            r,
+            ft.Row([
+                ft.Column([
+                    ft.Text("Mevcut odaklanma süresi", size=12, color=r["muted"], weight=ft.FontWeight.W_600),
+                    ft.Row([
+                        zm["oda_odak_txt"],
+                        ft.Container(
+                            width=38, height=38, border_radius=19,
+                            bgcolor=r["hdr"] if ben_aktif else opak(0.18, r["hdr"]),
+                            alignment=ORTA, ink=True,
+                            on_click=sayac_oynat_duraklat,
+                            tooltip="Kronometreyi Başlat / Duraklat",
+                            content=ft.Icon(
+                                ik("PAUSE") if ben_aktif else ik("PLAY_ARROW"),
+                                color=okunur_renk(r["hdr"]) if ben_aktif else r["hdr"], size=20,
+                            ),
+                        ),
+                    ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ], spacing=4, expand=True),
+                ft.Column([
+                    ft.Container(
+                        width=48, height=44, border_radius=22, alignment=ORTA,
+                        ink=True, on_click=sayac_oynat_duraklat,
+                        content=resim_olustur(sag_avatar_svg, width=48, height=42, fit=FIT.CONTAIN if FIT else None),
+                    ),
+                    zm["oda_bugun_txt"],
+                ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=16,
+        )
+
+        # 2) KÜTÜPHANE MASALARI GRİDİ (Aktif çalışanlar renkli ve parlak, çalışmayanlar soluk renkli)
+        ekran_gen = int(page.width or 400)
+        sutun_sayisi = 4 if ekran_gen >= 480 else 3
+        soluk_renk = opak(0.45, r["muted"])
+
+        masa_kutulari = []
+        for u in sirali_uyeler:
+            aktif_mi = bool(u.get("calisiyor"))
+            ben_mi = bool(u.get("ben"))
+            # Aktif çalışan öğrenci kronometredeki süresini / bugünkü toplam çalışma süresini canlı gösterir
+            gosterilen_sn = int(u.get("sn") or 0)
+            if aktif_mi and int(u.get("oturum_sn") or 0) > gosterilen_sn:
+                gosterilen_sn = int(u["oturum_sn"])
+
+            if aktif_mi:
+                svg_kod = masa_svg_b64_olustur("calisiyor_avatar", renk_hex=r["accent"], vurgu_hex=r["hdr"])
+                isim_renk = r["hdr"]
+                sure_renk = r["hdr"]
+                kutu_bg = opak(0.14, r["hdr"])
+                kutu_kenar = kenar(2, r["hdr"])
+            else:
+                svg_kod = masa_svg_b64_olustur(
+                    "bos",
+                    renk_hex=soluk_renk,
+                    vurgu_hex=soluk_renk,
+                    saat_rozet=(gosterilen_sn > 0),
+                )
+                isim_renk = r["muted"]
+                sure_renk = opak(0.65, r["muted"])
+                kutu_bg = opak(0.45, r["bg"])
+                kutu_kenar = kenar(1, opak(0.45, r["border"]))
+
+            masa_kutulari.append(ft.Container(
+                expand=True,
+                padding=pad_sim(horizontal=6, vertical=10),
+                border_radius=16,
+                bgcolor=kutu_bg,
+                border=kutu_kenar,
+                ink=True,
+                on_click=uye_masa_tikla(u),
+                content=ft.Column([
+                    resim_olustur(svg_kod, width=58, height=46, fit=FIT.CONTAIN if FIT else None),
+                    ft.Text(
+                        f"{u['ad']} (Sen)" if ben_mi else str(u["ad"]),
+                        size=12,
+                        weight=ft.FontWeight.W_800 if aktif_mi else ft.FontWeight.W_500,
+                        color=isim_renk,
+                        text_align=ft.TextAlign.CENTER,
+                        max_lines=1,
+                    ),
+                    ft.Text(
+                        oda_sure_metni(gosterilen_sn),
+                        size=11,
+                        weight=ft.FontWeight.W_800 if aktif_mi else ft.FontWeight.W_600,
+                        color=sure_renk,
+                        text_align=ft.TextAlign.CENTER,
+                    ),
+                    ft.Container(
+                        padding=pad_sim(horizontal=6, vertical=2),
+                        border_radius=8,
+                        bgcolor=opak(0.18, r["hdr"]) if aktif_mi else SEFFAF,
+                        content=ft.Text(
+                            "🔥 Çalışıyor" if aktif_mi else "⏸ Molada",
+                            size=9,
+                            weight=ft.FontWeight.W_700,
+                            color=r["hdr"] if aktif_mi else soluk_renk,
+                        ),
+                    ),
+                ], spacing=3, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            ))
+
+        grid_satirlari = []
+        for i in range(0, len(masa_kutulari), sutun_sayisi):
+            dilim = list(masa_kutulari[i:i + sutun_sayisi])
+            while len(dilim) < sutun_sayisi:
+                dilim.append(ft.Container(expand=True))
+            grid_satirlari.append(ft.Row(dilim, spacing=8))
+
+        secili_uye = ui.get("oda_secili_uye")
+        secili_uye_bandi = []
+        if isinstance(secili_uye, dict) and secili_uye.get("ad"):
+            secili_uye_bandi.append(ft.Container(
+                padding=pad_sim(horizontal=12, vertical=8),
+                border_radius=14,
+                bgcolor=opak(0.12, r["hdr"]),
+                border=kenar(1, r["hdr"]),
+                content=ft.Row([
+                    ft.Text("📚", size=16),
+                    ft.Text(
+                        f"{secili_uye['ad']} • Bugün: {oda_sure_metni(secili_uye.get('sn', 0))} • "
+                        f"{'🔥 Şu an çalışıyor' if secili_uye.get('calisiyor') else '⏸ Şu an çalışmıyor'} ({secili_uye.get('ders', 'YKS')})",
+                        size=12, weight=ft.FontWeight.W_700, color=r["txt"], expand=True,
+                    ),
+                ], spacing=8),
+            ))
+
+        oda_govde_karti = kart(
+            r,
+            ft.Column([
+                ft.Row([
+                    ft.Column([
+                        ft.Text("📚 Kütüphane", size=17, weight=ft.FontWeight.W_800, color=r["txt"]),
+                        ft.Row([
+                            ft.Text(f"{calisan_sayisi} kişi", size=12, weight=ft.FontWeight.W_800, color=r["hdr"]),
+                            ft.Text(f"Çalışıyor • Toplam {len(sirali_uyeler)} öğrenci", size=12, weight=ft.FontWeight.W_600, color=r["muted"]),
+                        ], spacing=4),
+                    ], spacing=2, expand=True),
+                    ft.IconButton(
+                        icon=ik("REFRESH"),
+                        icon_color=r["hdr"],
+                        icon_size=20,
+                        tooltip="Kütüphaneyi Yenile 🔄",
+                        on_click=lambda e: (canli_calisma_odasi_cek(zorla=True, senkron=False), snack("🔄 Kütüphane verileri yenileniyor...")),
+                    ),
+                ]),
+                *secili_uye_bandi,
+                ft.Column(grid_satirlari, spacing=10),
+                ft.Row([
+                    buton(
+                        r,
+                        "⏸ Çalışmayı Duraklat" if ben_aktif else "▶ Masana Otur & Kronometreyi Başlat",
+                        sayac_oynat_duraklat,
+                        ikincil=ben_aktif,
+                        genis=True,
+                        yukseklik=42,
+                    ),
+                ]),
+            ], spacing=14),
+            padding=18,
+        )
+
+        return ft.Column([
+            sayfa_basligi(r, "Kütüphane", "Öğrencilerin canlı çalışma masaları ve anlık süreleri"),
+            ust_sekme_cubugu,
+            ust_odak_bari,
+            oda_govde_karti,
+            ft.Container(height=24),
+        ], scroll=ft.ScrollMode.AUTO, expand=True, spacing=12)
+
     def calisma_sayfasi_olustur(r):
         aktif_calis_tab = int(ui.get("calis_tab") or 0)
 
-        def gorunum_degistir(e):
-            ui["calis_tab"] = 0 if aktif_calis_tab == 1 else 1
+        def calis_sekme_sec(idx):
+            ui["calis_tab"] = idx
+            if idx == 1:
+                canli_calisma_odasi_cek(zorla=False, senkron=False)
             yenile()
 
-        # Sağ üst başlıkta zarif geçiş kapsülü
-        gecis_kapsulu = ft.Container(
-            padding=pad_sim(horizontal=12, vertical=7),
-            border_radius=18,
-            bgcolor=opak(0.16, r["hdr"]),
-            border=kenar(1.5, r["hdr"]),
-            ink=True,
-            on_click=gorunum_degistir,
-            content=ft.Row([
-                ft.Icon(ik("TIMER") if aktif_calis_tab == 1 else ik("CALENDAR_MONTH"), color=r["hdr"], size=16),
-                ft.Text(
-                    "⏱ Sayaç" if aktif_calis_tab == 1 else "📅 Plan",
-                    size=12, weight=ft.FontWeight.W_800, color=r["hdr"],
-                ),
-            ], spacing=5, tight=True),
+        ust_sekme_cubugu = segment(
+            r,
+            ["⏱ Sayaç & Pomodoro", "📚 Kütüphane", "📅 Haftalık Plan"],
+            aktif_calis_tab if aktif_calis_tab in (0, 1, 2) else 0,
+            calis_sekme_sec,
         )
 
-        # Haftalık Plan alt görünümü
-        if aktif_calis_tab == 1:
+        # Haftalık Plan alt görünümü (indeks 2)
+        if aktif_calis_tab == 2:
             plan_col = plan_sayfasi_olustur(r)
             return ft.Column([
-                sayfa_basligi(r, "Haftalık Plan", "Görevlerini planla, ana sayfana yansısın", sag=gecis_kapsulu),
+                sayfa_basligi(r, "Haftalık Plan", "Görevlerini planla, ana sayfana yansısın"),
+                ust_sekme_cubugu,
                 *plan_col.controls[1:],
             ], scroll=ft.ScrollMode.AUTO, expand=True, spacing=14)
 
@@ -1584,15 +1990,19 @@ def main(page: ft.Page):
         def baslat(e):
             bugun_t = bugun_str()
             bugun_paylasildi_mi = (DB.get("gun") or {}).get("paylasim_yapildi") == bugun_t
-            ilk_baslatis_mi = gun_baslangicini_kaydet()
+            # Fotoğraf koymak zorunlu: Bugün henüz ders başlangıç fotoğrafı paylaşılmadıysa kronometreyi BAŞLATMA, önce fotoğraf ekranını aç!
+            if not bugun_paylasildi_mi:
+                ui["ilk_ders_paylasim_acik"] = True
+                sosyal["foto_mesaj"] = ""
+                yenile()
+                snack("📸 Derse başlamak için önce ders başlangıç fotoğrafını yüklemelisin!")
+                return
+            gun_baslangicini_kaydet()
             simdi_ts = time.time()
-            zm.update({"durum": "calisiyor", "birikmis": 0.0, "t0": simdi_ts, "son_kayit": 0, "bildirildi": False})
+            zm.update({"durum": "calisiyor", "birikmis": 0.0, "t0": simdi_ts, "son_kayit": 0, "son_su_saat": 0, "bildirildi": False})
             aktif_sayac_kaydet()
             soz = evcil_motor.pomodoro_basladi(ui["pomo_ders_kat"])
             evcil_ui["mesaj"] = soz
-            # Günün ilk dersine başlandığında (veya bugün henüz ders başlangıç postu paylaşılmadıysa) paylaşım ekranını aç
-            if ilk_baslatis_mi or not bugun_paylasildi_mi:
-                ui["ilk_ders_paylasim_acik"] = True
             yenile()
             tik_baslat()
             evcil_konustur(soz)
@@ -1635,12 +2045,16 @@ def main(page: ft.Page):
         def sifirla(e):
             ceza_soz = evcil_motor.pomodoro_bozuldu()
             evcil_ui["mesaj"] = ceza_soz
-            zm.update({"durum": "bos", "birikmis": 0.0, "t0": None, "son_kayit": 0, "bildirildi": False})
+            zm.update({"durum": "bos", "birikmis": 0.0, "t0": None, "son_kayit": 0, "son_su_saat": 0, "bildirildi": False})
             ui["ilk_ders_paylasim_acik"] = False
             aktif_sayac_kaydet()
             snack("💥 Kronometre yarıda kesildi! Yoldaşının kafasına silgi düştü 🥺")
             yenile()
             evcil_konustur(ceza_soz)
+
+        # Canlı Çalışma Odası (indeks 1 — Resimdeki YKSPROMAXXX etüt odası görünümü)
+        if aktif_calis_tab == 1 and not ui.get("ilk_ders_paylasim_acik"):
+            return canli_calisma_odasi_olustur(r, ust_sekme_cubugu, baslat, duraklat, devam)
 
         # Kalıcı sayaç metni ve halkasını yerinde güncelle (yeni nesne yaratılmaz, böylece canlı tik asla kopmaz!)
         zm["label"].value = zaman_metni()
@@ -1657,11 +2071,18 @@ def main(page: ft.Page):
 
         # Günün ilk dersi paylaşım ekranı açıksa doğrudan en üstte tam ekran kart olarak göster
         if ui.get("ilk_ders_paylasim_acik"):
+            sayac_bekliyor_mu = (zm["durum"] == "bos")
             canli_sayac_bandi = kart(r, ft.Row([
-                ft.Icon(ik("TIMER"), color=r["hdr"], size=22),
+                ft.Icon(ik("ADD_PHOTO_ALTERNATE") if sayac_bekliyor_mu else ik("TIMER"), color=r["hdr"], size=22),
                 ft.Column([
-                    ft.Text("Kronometre Arka Planda Çalışıyor 🔥", size=13, weight=ft.FontWeight.W_800, color=r["txt"]),
-                    ft.Text("Paylaşımını tamamla veya sayaca dön", size=11, color=r["muted"]),
+                    ft.Text(
+                        "Fotoğraf Zorunlu: Paylaşınca Kronometre Başlayacak 📸" if sayac_bekliyor_mu else "Kronometre Arka Planda Çalışıyor 🔥",
+                        size=13, weight=ft.FontWeight.W_800, color=r["txt"],
+                    ),
+                    ft.Text(
+                        "Ders fotoğrafını seçip paylaşmadan kronometre başlamaz" if sayac_bekliyor_mu else "Paylaşımını tamamla veya sayaca dön",
+                        size=11, color=r["muted"],
+                    ),
                 ], spacing=1, expand=True),
                 ft.Container(
                     padding=pad_sim(horizontal=10, vertical=6), border_radius=12, bgcolor=opak(0.15, r["hdr"]),
@@ -1669,9 +2090,13 @@ def main(page: ft.Page):
                 ),
             ], spacing=10), padding=12)
             return ft.Column([
-                sayfa_basligi(r, "İlk Ders Paylaşımı 📸", "Günün ilk ders başlangıç postunu paylaş"),
+                sayfa_basligi(r, "İlk Ders Paylaşımı 📸", "Derse başlamak için fotoğrafını ekle ve paylaş"),
                 canli_sayac_bandi,
-                ilk_ders_paylasim_karti_olustur(r, kapat_fn=lambda e: (ui.update({"ilk_ders_paylasim_acik": False}), yenile())),
+                ilk_ders_paylasim_karti_olustur(
+                    r,
+                    kapat_fn=lambda e: (ui.update({"ilk_ders_paylasim_acik": False}), yenile()),
+                    sayac_bekliyor=sayac_bekliyor_mu,
+                ),
                 ft.Container(height=24),
             ], scroll=ft.ScrollMode.AUTO, expand=True, spacing=12)
 
@@ -1820,7 +2245,8 @@ def main(page: ft.Page):
         ]), padding=14)
 
         return ft.Column([
-            sayfa_basligi(r, "Çalışma İstasyonu", "Yoldaşın seninle birlikte masada odaklanır", sag=gecis_kapsulu),
+            sayfa_basligi(r, "Çalışma İstasyonu", "Yoldaşın ve arkadaşlarınla birlikte odaklan"),
+            ust_sekme_cubugu,
             coop_karti,
             sayac_karti,
             bugun_karti,
@@ -1854,18 +2280,62 @@ def main(page: ft.Page):
             kaydet("netler")
         return silinen_sayi
 
-    def denemeleri_baska_hesaba_kopyala_islem(hedef_kullanici, indeksler=None, sinav_filtresi=None, senkron=True):
-        """Seçili (veya filtrelenen) deneme netlerini buluttaki farklı bir kullanıcı hesabına kopyalar.
-        Döndürür: (basarili_mi, mesaj, kopyalanan_adet)
+    def deneme_duzenle_islem(indeks, yeni_ad=None, yeni_tarih=None, yeni_sinav=None, tr=None, sos=None, mat=None, fen=None):
+        """Verilen indeksteki denemenin adını, tarihini, sınav türünü ve ders netlerini günceller."""
+        mevcut = list(DB.get("netler") or [])
+        idx = int(indeks)
+        if not (0 <= idx < len(mevcut)):
+            return False, "Düzenlenecek deneme bulunamadı."
+        eski = deneme_satiri_ayristir(mevcut[idx])
+        eski_sinav = str((mevcut[idx] or {}).get("sinav") or "TYT").upper()
+        ad_v = (str(yeni_ad).strip() if yeni_ad is not None else eski["ad"]) or eski["ad"]
+        tarih_v = (str(yeni_tarih).strip() if yeni_tarih is not None else eski["tarih"]) or eski["tarih"]
+        sinav_v = (str(yeni_sinav).strip().upper() if yeni_sinav is not None else eski_sinav) or "TYT"
+        if sinav_v not in ("TYT", "AYT"):
+            sinav_v = "TYT"
+        tr_v = round(sayi(tr, eski["tr"]), 2) if tr is not None else eski["tr"]
+        sos_v = round(sayi(sos, eski["sos"]), 2) if sos is not None else eski["sos"]
+        mat_v = round(sayi(mat, eski["mat"]), 2) if mat is not None else eski["mat"]
+        fen_v = round(sayi(fen, eski["fen"]), 2) if fen is not None else eski["fen"]
+        toplam_v = round(tr_v + sos_v + mat_v + fen_v, 2)
+        guncel = {
+            "ad": ad_v,
+            "tarih": tarih_v,
+            "sinav": sinav_v,
+            "tr": tr_v,
+            "sos": sos_v,
+            "mat": mat_v,
+            "fen": fen_v,
+            "dersler": {"Türkçe": tr_v, "Sosyal": sos_v, "Matematik": mat_v, "Fen": fen_v},
+            "toplam": toplam_v,
+        }
+        DB["netler"][idx] = guncel
+        ui["duzenlenen_net_idx"] = None
+        kaydet("netler")
+        return True, f"✅ '{ad_v}' denemesi güncellendi! (Yeni Toplam: {toplam_v:.2f} Net)"
+
+    def denemeleri_baska_hesaba_kopyala_islem(hedef_kullanici, indeksler=None, sinav_filtresi=None, senkron=True, kaynak_kullanici=None):
+        """Arda'nın Paneli üzerinden kaynak hesaptaki seçili (veya filtrelenen) deneme netlerini buluttaki
+        farklı bir kullanıcı hesabına kopyalar. Döndürür: (basarili_mi, mesaj, kopyalanan_adet)
         """
         hedef = (hedef_kullanici or "").strip().lower()
-        ben = (kullanici_adi() or "").strip().lower()
+        kaynak = (kaynak_kullanici or kullanici_adi() or "").strip().lower()
         if not hedef:
             return False, "Lütfen kopyalanacak hedef kullanıcı adını seç veya yaz.", 0
-        if hedef == ben:
-            return False, "Denemeler zaten bu hesapta kayıtlı! Farklı bir kullanıcı adı seç.", 0
+        if hedef == kaynak:
+            return False, "Denemeler zaten bu hesapta kayıtlı! Farklı bir hedef kullanıcı adı seç.", 0
 
-        mevcut = list(DB.get("netler") or [])
+        if kaynak_kullanici and kaynak != (kullanici_adi() or "").strip().lower():
+            kaynak_veri = (panel.get("veri") or {}).get(kaynak)
+            if not isinstance(kaynak_veri, dict):
+                try:
+                    kaynak_veri = bulut_oku(kaynak) or {}
+                except Exception:
+                    kaynak_veri = {}
+            mevcut = listeye(kaynak_veri.get("netler"))
+        else:
+            mevcut = list(DB.get("netler") or [])
+
         if indeksler:
             sec_set = {int(i) for i in indeksler if 0 <= int(i) < len(mevcut)}
             kaynak_denemeler = [copy.deepcopy(mevcut[i]) for i in sorted(sec_set)]
@@ -1888,6 +2358,11 @@ def main(page: ft.Page):
                     hedef_netler.append(copy.deepcopy(d))
                     eklenen += 1
                 bulut_patch(f"users/{hedef}", {"netler": hedef_netler})
+                if isinstance(panel.get("veri"), dict) and hedef in panel["veri"] and isinstance(panel["veri"][hedef], dict):
+                    panel["veri"][hedef]["netler"] = hedef_netler
+                if hedef == (kullanici_adi() or "").strip().lower():
+                    DB["netler"] = hedef_netler
+                    yerel_yaz()
                 return True, f"✅ {eklenen} deneme '{hedef}' hesabına başarıyla kopyalandı!", eklenen
             except Exception as ex:
                 return False, f"⚠️ Kopyalama hatası: {ex}", 0
@@ -1899,7 +2374,7 @@ def main(page: ft.Page):
             ok, msg, _ = _kopyala()
             snack(msg)
             if ok:
-                ui["secili_netler"] = set()
+                ui["panel_secili_netler"] = set()
                 yenile()
         arka_plan(_arka)
         return True, "Kopyalanıyor...", len(kaynak_denemeler)
@@ -1962,7 +2437,7 @@ def main(page: ft.Page):
                 ], spacing=6),
             ))
 
-        # --- DENEME SİLME & FARKLI HESABA KOPYALAMA YÖNETİMİ ---
+        # --- DENEME DÜZENLEME & SİLME YÖNETİMİ (Kopyalama işlemi yalnızca Arda'nın Paneli'ndedir) ---
         if indeksli_kayitlar is None:
             indeksli_kayitlar = [(idx, k) for idx, k in enumerate(DB["netler"]) if k.get("sinav", "TYT") == secili_sinav]
         gorunen_indeksler = [idx for idx, _ in indeksli_kayitlar]
@@ -1990,6 +2465,8 @@ def main(page: ft.Page):
         def tek_deneme_sil(gercek_idx, ad_str):
             def f(e):
                 if deneme_sil_islem(gercek_idx) > 0:
+                    if ui.get("duzenlenen_net_idx") == gercek_idx:
+                        ui["duzenlenen_net_idx"] = None
                     yenile()
                     snack(f"🗑 '{ad_str}' denemesi silindi.")
             return f
@@ -1997,20 +2474,16 @@ def main(page: ft.Page):
         def secili_denemeleri_sil(e):
             adet = deneme_sil_islem(secili_gorunen)
             if adet > 0:
+                ui["duzenlenen_net_idx"] = None
                 yenile()
                 snack(f"🗑 Seçilen {adet} deneme silindi.")
 
-        def kopyala_panel_ac_kapat(e):
-            ui["net_kopyala_acik"] = not bool(ui.get("net_kopyala_acik"))
-            if ui["net_kopyala_acik"]:
-                arka_plan(lambda: (kullanici_listesi_cek(zorla=True), yenile()))
-            yenile()
-
-        def tek_deneme_kopyala_hazirla(gercek_idx):
+        def tek_deneme_duzenle_ac(gercek_idx):
             def f(e):
-                secili_set.add(gercek_idx)
-                ui["net_kopyala_acik"] = True
-                arka_plan(lambda: (kullanici_listesi_cek(zorla=True), yenile()))
+                if ui.get("duzenlenen_net_idx") == gercek_idx:
+                    ui["duzenlenen_net_idx"] = None
+                else:
+                    ui["duzenlenen_net_idx"] = gercek_idx
                 yenile()
             return f
 
@@ -2024,14 +2497,6 @@ def main(page: ft.Page):
                 content=ft.Text("☑️ Seçimi Kaldır" if hepsi_secili_mi else "☑️ Tümünü Seç",
                                 size=11, weight=ft.FontWeight.W_700, color=r["hdr"] if hepsi_secili_mi else r["txt"]),
             ),
-            ft.Container(
-                padding=pad_sim(horizontal=10, vertical=6), border_radius=12, ink=True,
-                on_click=kopyala_panel_ac_kapat,
-                bgcolor=r["hdr"] if ui.get("net_kopyala_acik") else r["bg"],
-                border=kenar(1, r["hdr"]),
-                content=ft.Text("📋 Farklı Hesaba Kopyala", size=11, weight=ft.FontWeight.W_700,
-                                color=okunur_renk(r["hdr"]) if ui.get("net_kopyala_acik") else r["hdr"]),
-            ),
         ]
         if secili_gorunen:
             yonetim_butonlari.append(ft.Container(
@@ -2041,68 +2506,56 @@ def main(page: ft.Page):
                 content=ft.Text(f"🗑 Seçilenleri Sil ({len(secili_gorunen)})", size=11, weight=ft.FontWeight.W_800, color=KIRMIZI),
             ))
 
-        kopyala_karti = []
-        if ui.get("net_kopyala_acik"):
-            ben_k = (kullanici_adi() or "").lower()
-            diger_kullanicilar = [u for u in (sosyal.get("kullanicilar_cache") or []) if u != ben_k]
-
-            def hedef_yaz_degisti(e):
-                ui["net_kopyala_hedef"] = e.control.value or ""
-
-            hedef_in = girdi(
-                r, "Örn: sude", label="Kopyalanacak Hedef Hesap (Kullanıcı Adı)",
-                value=ui.get("net_kopyala_hedef", ""), on_change=hedef_yaz_degisti, expand=True,
+        duzenleme_karti = []
+        duz_idx = ui.get("duzenlenen_net_idx")
+        if isinstance(duz_idx, int) and 0 <= duz_idx < len(DB["netler"]):
+            mevcut_d = deneme_satiri_ayristir(DB["netler"][duz_idx])
+            mevcut_sinav = str((DB["netler"][duz_idx] or {}).get("sinav") or "TYT").upper()
+            duz_ad_in = girdi(r, label="Deneme Adı", value=mevcut_d["ad"], expand=True)
+            duz_tarih_in = girdi(r, label="Tarih", value=mevcut_d["tarih"], width=130)
+            duz_sinav_radyo = ft.RadioGroup(
+                value=mevcut_sinav,
+                content=ft.Row([
+                    ft.Radio(value="TYT", label="TYT", fill_color=r["hdr"], label_style=ft.TextStyle(color=r["txt"])),
+                    ft.Radio(value="AYT", label="AYT", fill_color=r["hdr"], label_style=ft.TextStyle(color=r["txt"])),
+                ]),
             )
+            duz_tr_in = girdi(r, label="Türkçe / Edb", value=f"{mevcut_d['tr']:g}", keyboard_type=ft.KeyboardType.NUMBER, expand=True)
+            duz_sos_in = girdi(r, label="Sosyal", value=f"{mevcut_d['sos']:g}", keyboard_type=ft.KeyboardType.NUMBER, expand=True)
+            duz_mat_in = girdi(r, label="Matematik", value=f"{mevcut_d['mat']:g}", keyboard_type=ft.KeyboardType.NUMBER, expand=True)
+            duz_fen_in = girdi(r, label="Fen", value=f"{mevcut_d['fen']:g}", keyboard_type=ft.KeyboardType.NUMBER, expand=True)
 
-            def hedef_cip_sec(u_ad):
-                def f(e):
-                    ui["net_kopyala_hedef"] = u_ad
-                    yenile()
-                return f
-
-            kullanici_cipleri = [
-                ft.Container(
-                    padding=pad_sim(horizontal=10, vertical=5), border_radius=12, ink=True,
-                    on_click=hedef_cip_sec(u_ad),
-                    bgcolor=r["hdr"] if (ui.get("net_kopyala_hedef") or "").lower() == u_ad else r["card_bg"],
-                    border=kenar(1, r["hdr"] if (ui.get("net_kopyala_hedef") or "").lower() == u_ad else r["border"]),
-                    content=ft.Text(f"👤 {u_ad.upper()}", size=11, weight=ft.FontWeight.W_700,
-                                    color=okunur_renk(r["hdr"]) if (ui.get("net_kopyala_hedef") or "").lower() == u_ad else r["txt"]),
+            def duzenleme_kaydet_tikla(e):
+                ok, msg = deneme_duzenle_islem(
+                    duz_idx,
+                    yeni_ad=duz_ad_in.value,
+                    yeni_tarih=duz_tarih_in.value,
+                    yeni_sinav=duz_sinav_radyo.value,
+                    tr=duz_tr_in.value,
+                    sos=duz_sos_in.value,
+                    mat=duz_mat_in.value,
+                    fen=duz_fen_in.value,
                 )
-                for u_ad in diger_kullanicilar[:15]
-            ]
+                snack(msg)
+                if ok:
+                    yenile()
 
-            def kopyala_calistir(tum_sinav_mi=False):
-                def f(e):
-                    hedef_k = (hedef_in.value or ui.get("net_kopyala_hedef") or "").strip().lower()
-                    ui["net_kopyala_hedef"] = hedef_k
-                    if not tum_sinav_mi and not secili_gorunen:
-                        snack("Önce listeden kopyalanacak denemeleri işaretle veya 'Tümünü Kopyala'ya bas ☑️")
-                        return
-                    ok, msg, _ = denemeleri_baska_hesaba_kopyala_islem(
-                        hedef_k,
-                        indeksler=None if tum_sinav_mi else secili_gorunen,
-                        sinav_filtresi=secili_sinav if tum_sinav_mi else None,
-                        senkron=True,
-                    )
-                    snack(msg)
-                    if ok:
-                        ui["secili_netler"] = set()
-                        yenile()
-                return f
+            def duzenleme_iptal_tikla(e):
+                ui["duzenlenen_net_idx"] = None
+                yenile()
 
-            kopyala_karti.append(ft.Container(
-                padding=12, border_radius=14, bgcolor=opak(0.10, r["hdr"]), border=kenar(1.5, r["hdr"]),
+            duzenleme_karti.append(ft.Container(
+                padding=14, border_radius=16, bgcolor=opak(0.10, r["hdr"]), border=kenar(1.5, r["hdr"]),
                 content=ft.Column([
-                    ft.Text("📋 Denemeleri Farklı Hesaba Kopyala", size=13, weight=ft.FontWeight.W_800, color=r["hdr"]),
-                    ft.Text("Aşağıdan hedef hesabı seç (veya kullanıcı adını yaz), ardından seçili ya da tüm denemeleri kopyala:",
-                            size=11, color=r["muted"]),
-                    *([ft.Row(kullanici_cipleri, wrap=True, spacing=6, run_spacing=6)] if kullanici_cipleri else []),
-                    hedef_in,
                     ft.Row([
-                        buton(r, f"📋 Seçilenleri Kopyala ({len(secili_gorunen)})", kopyala_calistir(False), genis=True, yukseklik=40),
-                        buton(r, f"📋 Tüm {secili_sinav}'leri Kopyala ({len(gorunen_indeksler)})", kopyala_calistir(True), ikincil=True, genis=True, yukseklik=40),
-                    ], spacing=8),
+                        ft.Text(f"✏️ Deneme Netlerini Düzenle: {mevcut_d['ad']}", size=14, weight=ft.FontWeight.W_800, color=r["hdr"], expand=True),
+                        buton(r, "✕ Vazgeç", duzenleme_iptal_tikla, ikincil=True, yukseklik=32),
+                    ]),
+                    ft.Row([duz_ad_in, duz_tarih_in], spacing=8),
+                    duz_sinav_radyo,
+                    ft.Row([duz_tr_in, duz_sos_in], spacing=8),
+                    ft.Row([duz_mat_in, duz_fen_in], spacing=8),
+                    buton(r, "💾 Değişiklikleri Kaydet", duzenleme_kaydet_tikla, genis=True, yukseklik=42),
                 ], spacing=8),
             ))
 
@@ -2110,10 +2563,11 @@ def main(page: ft.Page):
         for gercek_idx, k in reversed(indeksli_kayitlar):
             d_s = deneme_satiri_ayristir(k)
             isaretli = gercek_idx in secili_set
+            duzenleniyor_mu = (ui.get("duzenlenen_net_idx") == gercek_idx)
             satir_listesi.append(ft.Container(
-                padding=pad_sim(horizontal=8, vertical=6), border_radius=12,
-                bgcolor=opak(0.10, r["hdr"]) if isaretli else r["bg"],
-                border=kenar(1.5 if isaretli else 1, r["hdr"] if isaretli else r["border"]),
+                padding=pad_sim(horizontal=8, vertical=6), border_radius=14,
+                bgcolor=opak(0.12, r["hdr"]) if (isaretli or duzenleniyor_mu) else r["bg"],
+                border=kenar(1.5 if (isaretli or duzenleniyor_mu) else 1, r["hdr"] if (isaretli or duzenleniyor_mu) else r["border"]),
                 content=ft.Row([
                     ft.Checkbox(
                         value=isaretli,
@@ -2133,9 +2587,9 @@ def main(page: ft.Page):
                         content=ft.Text(f"{d_s['toplam']:.2f}", size=12, weight=ft.FontWeight.W_800, color=r["hdr"]),
                     ),
                     ft.IconButton(
-                        icon=ik("CONTENT_COPY"), icon_color=r["hdr"], icon_size=19,
-                        tooltip="Bu denemeyi farklı hesaba kopyala 📋",
-                        on_click=tek_deneme_kopyala_hazirla(gercek_idx),
+                        icon=ik("EDIT_NOTE"), icon_color=r["hdr"], icon_size=20,
+                        tooltip="Bu denemenin netlerini düzenle ✏️",
+                        on_click=tek_deneme_duzenle_ac(gercek_idx),
                     ),
                     ft.IconButton(
                         icon=ik("DELETE_OUTLINE"), icon_color=KIRMIZI, icon_size=20,
@@ -2152,8 +2606,8 @@ def main(page: ft.Page):
             excel_btn,
             *excel_bilgi_karti,
             ft.Divider(height=6, color=r["border"]),
-            ft.Row(yonetim_butonlari, wrap=True, spacing=6, run_spacing=6),
-            *kopyala_karti,
+            ft.Row(yonetim_butonlari, spacing=6),
+            *duzenleme_karti,
             *satir_listesi,
         ], spacing=10)
 
@@ -2369,6 +2823,63 @@ def main(page: ft.Page):
     # ==========================================
     # 10. HAFTALIK PLAN
     # ==========================================
+    def plan_gecmise_ekle(gorev_metni):
+        """Haftalık plana eklenen görevi otomatik tamamlama (autocomplete) geçmişine kaydeder."""
+        m = str(gorev_metni or "").strip()
+        if not m:
+            return
+        gecmis = listeye(DB.get("plan_gecmis"))
+        mevcut_low = {str(x).strip().lower(): str(x).strip() for x in gecmis if str(x).strip()}
+        if m.lower() in mevcut_low:
+            gecmis = [x for x in gecmis if str(x).strip().lower() != m.lower()]
+        gecmis.insert(0, m)
+        DB["plan_gecmis"] = gecmis[:150]
+        kaydet("plan_gecmis")
+
+    def plan_onerileri_bul(yazilan_metin):
+        """Yazılmaya başlanan metne göre daha önce eklenmiş görev önerilerini döndürür."""
+        q = str(yazilan_metin or "").strip().lower()
+        havuz = []
+        gorulen = set()
+        for x in listeye(DB.get("plan_gecmis")):
+            s = str(x or "").strip()
+            if s and s.lower() not in gorulen:
+                gorulen.add(s.lower())
+                havuz.append(s)
+        for g_k in GUNLER:
+            for t in (DB.get("plan", {}).get(g_k) or []):
+                s = str((t or {}).get("gorev") or "").strip()
+                if s and s.lower() not in gorulen:
+                    gorulen.add(s.lower())
+                    havuz.append(s)
+        for g_k in GUNLER:
+            for t in (HAFTALIK_PLAN.get(g_k) or []):
+                s = str((t or {}).get("gorev") or "").strip()
+                if s and s.lower() not in gorulen:
+                    gorulen.add(s.lower())
+                    havuz.append(s)
+        if not q:
+            return []
+        baslayanlar = [s for s in havuz if s.lower().startswith(q)]
+        icerenler = [s for s in havuz if not s.lower().startswith(q) and q in s.lower()]
+        return (baslayanlar + icerenler)[:6]
+
+    def haftalik_programi_tamamen_sifirla_islem():
+        """Mevcut haftalık programdaki görevleri otomatik tamamlama geçmişine yedekleyip tüm haftayı sıfırlar."""
+        gecmis = listeye(DB.get("plan_gecmis"))
+        gorulen = {str(x).strip().lower() for x in gecmis if str(x).strip()}
+        for g in GUNLER:
+            for t in (DB.get("plan", {}).get(g) or []):
+                m = str((t or {}).get("gorev") or "").strip()
+                if m and m.lower() not in gorulen:
+                    gecmis.insert(0, m)
+                    gorulen.add(m.lower())
+            DB["plan"][g] = []
+        DB["plan_gecmis"] = gecmis[:150]
+        kaydet("plan")
+        kaydet("plan_gecmis")
+        return len(DB["plan_gecmis"])
+
     def plan_sayfasi_olustur(r):
         gi = ui["plan_gun"]
         g_ad = GUNLER[gi]
@@ -2398,12 +2909,84 @@ def main(page: ft.Page):
                 ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             ))
 
-        yeni_in = girdi(r, f"{g_ad} gününe görev ekle...", expand=True)
+        yeni_in = girdi(r, f"{g_ad} gününe görev ekle (Örn: tyt 25 soru)...", expand=True)
+        oneri_kutusu = ft.Column(spacing=4)
+
+        def oneri_sec_ve_ekle(secilen_metin):
+            def f(e):
+                DB["plan"][g_ad].append({"gorev": secilen_metin, "bitti": False})
+                plan_gecmise_ekle(secilen_metin)
+                kaydet("plan")
+                yenile()
+                snack(f"✅ '{secilen_metin}' {g_ad} planına eklendi!")
+            return f
+
+        def oneri_kutuya_doldur(secilen_metin):
+            def f(e):
+                yeni_in.value = secilen_metin
+                oneri_kutusu.controls.clear()
+                try:
+                    yeni_in.update()
+                    oneri_kutusu.update()
+                except Exception:
+                    page.update()
+            return f
+
+        def yazarken_oneri_guncelle(e):
+            metin = (e.control.value or "").strip()
+            eslesenler = plan_onerileri_bul(metin)
+            oneri_kutusu.controls.clear()
+            if eslesenler:
+                oneri_satirlari = []
+                for o_metin in eslesenler:
+                    oneri_satirlari.append(ft.Container(
+                        padding=pad_sim(horizontal=10, vertical=7),
+                        border_radius=12,
+                        bgcolor=opak(0.12, r["hdr"]),
+                        border=kenar(1, opak(0.35, r["hdr"])),
+                        content=ft.Row([
+                            ft.Icon(ik("HISTORY"), color=r["hdr"], size=16),
+                            ft.Container(
+                                expand=True,
+                                ink=True,
+                                on_click=oneri_kutuya_doldur(o_metin),
+                                content=ft.Text(o_metin, size=13, weight=ft.FontWeight.W_700, color=r["txt"]),
+                            ),
+                            ft.Container(
+                                padding=pad_sim(horizontal=10, vertical=4),
+                                border_radius=10,
+                                bgcolor=r["hdr"],
+                                ink=True,
+                                on_click=oneri_sec_ve_ekle(o_metin),
+                                content=ft.Text("＋ Ekle", size=11, weight=ft.FontWeight.W_800, color=okunur_renk(r["hdr"])),
+                            ),
+                        ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    ))
+                oneri_kutusu.controls.append(ft.Container(
+                    padding=8,
+                    border_radius=14,
+                    bgcolor=r["bg"],
+                    border=kenar(1, r["border"]),
+                    content=ft.Column([
+                        ft.Text("💡 Önceden eklediğin görevler (Tıkla tamamla veya ＋ Ekle):", size=11, weight=ft.FontWeight.W_700, color=r["hdr"]),
+                        *oneri_satirlari,
+                    ], spacing=5),
+                ))
+            try:
+                oneri_kutusu.update()
+            except Exception:
+                try:
+                    page.update()
+                except Exception:
+                    pass
+
+        yeni_in.on_change = yazarken_oneri_guncelle
 
         def ekle(e):
             v = (yeni_in.value or "").strip()
             if v:
                 DB["plan"][g_ad].append({"gorev": v, "bitti": False})
+                plan_gecmise_ekle(v)
                 kaydet("plan")
                 yenile()
 
@@ -2415,6 +2998,9 @@ def main(page: ft.Page):
             yenile()
 
         def sil(e):
+            silinen = DB["plan"][g_ad][e.control.data]
+            if isinstance(silinen, dict) and silinen.get("gorev"):
+                plan_gecmise_ekle(silinen["gorev"])
             del DB["plan"][g_ad][e.control.data]
             kaydet("plan")
             yenile()
@@ -2425,6 +3011,11 @@ def main(page: ft.Page):
                     t["bitti"] = False
             kaydet("plan")
             snack("Haftanın tüm tikleri kaldırıldı 🔄")
+            yenile()
+
+        def programi_tamamen_temizle(e):
+            haftalik_programi_tamamen_sifirla_islem()
+            snack("🗑 Haftalık program tamamen sıfırlandı! (Eski görevlerin yazarken altta otomatik önerilir 💡)")
             yenile()
 
         satirlar = []
@@ -2445,6 +3036,19 @@ def main(page: ft.Page):
             satirlar.append(ft.Text("Bu gün için görev yok. Yukarıdan ekleyebilirsin.", color=r["muted"], italic=True, size=13))
 
         biten = sum(1 for t in gorevler if t["bitti"])
+        sifirlama_alani = kart(r, ft.Column([
+            bolum_basligi(r, ik("CLEANING_SERVICES"), "Haftalık Programı Sıfırlama Alanı"),
+            ft.Text(
+                "Yeni haftaya geçerken sadece tikleri kaldırabilir veya tüm haftalık programı sıfırlayabilirsin. "
+                "(Sıfırlasan bile önceden yazdığın görevler hafızada kalır; tekrar yazmaya başladığında altta otomatik çıkar.)",
+                size=12, color=r["muted"],
+            ),
+            ft.Row([
+                buton(r, "🔄 Tikleri Sıfırla", haftayi_sifirla, ikincil=True, genis=True, yukseklik=42),
+                buton(r, "🗑 Programı Tamamen Sıfırla", programi_tamamen_temizle, ikincil=True, genis=True, yukseklik=42),
+            ], spacing=8),
+        ], spacing=10))
+
         return ft.Column([
             sayfa_basligi(r, "Haftalık Plan", "Eklediklerin ana sayfana yansır"),
             ft.Row(cipler, scroll=ft.ScrollMode.AUTO, spacing=8),
@@ -2452,9 +3056,10 @@ def main(page: ft.Page):
                 bolum_basligi(r, ik("EVENT_NOTE"), g_ad,
                               ft.Text(f"{biten}/{len(gorevler)}", size=13, color=r["hdr"], weight=ft.FontWeight.BOLD)),
                 ft.Row([yeni_in, ft.IconButton(icon=ik("ADD_CIRCLE"), icon_color=r["hdr"], icon_size=38, on_click=ekle)]),
+                oneri_kutusu,
                 *satirlar,
             ], spacing=10)),
-            buton(r, "Haftanın Tiklerini Sıfırla", haftayi_sifirla, ikon=ik("REFRESH"), ikincil=True, genis=True, yukseklik=44),
+            sifirlama_alani,
             ft.Container(height=24),
         ], scroll=ft.ScrollMode.AUTO, expand=True, spacing=14)
 
@@ -4918,6 +5523,134 @@ def main(page: ft.Page):
             kartlar.append(kart(r, ft.Column(satirlar, spacing=4), padding=14))
         return kartlar
 
+    def panel_deneme_kopyalama_karti(r, users, isimler):
+        """Arda'nın Paneli'ne özel: Bir öğrencinin deneme netlerini seçip başka bir öğrenci hesabına kopyalama kartı."""
+        if not isimler:
+            return ft.Container()
+        kaynak = ui.get("panel_kopya_kaynak")
+        if kaynak not in isimler:
+            kaynak = ui.get("panel_ogrenci") if ui.get("panel_ogrenci") in isimler else isimler[0]
+            ui["panel_kopya_kaynak"] = kaynak
+
+        kaynak_netler = listeye((users.get(kaynak) or {}).get("netler"))
+        secili_set = ui.setdefault("panel_secili_netler", set())
+        gecerli_secili = [i for i in sorted(secili_set) if 0 <= i < len(kaynak_netler)]
+
+        def kaynak_sec(u_ad):
+            def f(e):
+                ui["panel_kopya_kaynak"] = u_ad
+                ui["panel_secili_netler"] = set()
+                yenile()
+            return f
+
+        def hedef_sec(u_ad):
+            def f(e):
+                ui["panel_kopya_hedef"] = u_ad
+                yenile()
+            return f
+
+        def tek_sec_degistir(idx):
+            def f(e):
+                if e.control.value:
+                    secili_set.add(idx)
+                else:
+                    secili_set.discard(idx)
+                yenile()
+            return f
+
+        def tumunu_sec_degistir(e):
+            if len(gecerli_secili) == len(kaynak_netler):
+                secili_set.clear()
+            else:
+                for idx in range(len(kaynak_netler)):
+                    secili_set.add(idx)
+            yenile()
+
+        kaynak_cipleri = ft.Row([
+            ft.Container(
+                padding=pad_sim(horizontal=10, vertical=6), border_radius=14, ink=True, on_click=kaynak_sec(u_ad),
+                bgcolor=r["hdr"] if u_ad == kaynak else r["bg"],
+                border=kenar(1, r["hdr"] if u_ad == kaynak else r["border"]),
+                content=ft.Text(f"📤 {u_ad.upper()} ({len(listeye((users.get(u_ad) or {}).get('netler')))})",
+                                size=11, weight=ft.FontWeight.W_700,
+                                color=okunur_renk(r["hdr"]) if u_ad == kaynak else r["txt"]),
+            )
+            for u_ad in isimler
+        ], scroll=ft.ScrollMode.AUTO, spacing=6)
+
+        diger_hedefler = [u_ad for u_ad in isimler if u_ad != kaynak]
+        hedef_cipleri = ft.Row([
+            ft.Container(
+                padding=pad_sim(horizontal=10, vertical=6), border_radius=14, ink=True, on_click=hedef_sec(u_ad),
+                bgcolor=r["accent"] if (ui.get("panel_kopya_hedef") or "").lower() == u_ad else r["bg"],
+                border=kenar(1, r["accent"] if (ui.get("panel_kopya_hedef") or "").lower() == u_ad else r["border"]),
+                content=ft.Text(f"📥 {u_ad.upper()}", size=11, weight=ft.FontWeight.W_700,
+                                color=okunur_renk(r["accent"]) if (ui.get("panel_kopya_hedef") or "").lower() == u_ad else r["txt"]),
+            )
+            for u_ad in diger_hedefler
+        ], scroll=ft.ScrollMode.AUTO, spacing=6)
+
+        hedef_in = girdi(
+            r, "Hedef kullanıcı adı (Örn: sude)",
+            label="Kopyalanacak Hedef Hesap",
+            value=ui.get("panel_kopya_hedef", ""),
+            on_change=lambda e: ui.update({"panel_kopya_hedef": e.control.value or ""}),
+        )
+
+        def panel_kopyala_calistir(tumunu_mu=False):
+            def f(e):
+                hedef_k = (hedef_in.value or ui.get("panel_kopya_hedef") or "").strip().lower()
+                ui["panel_kopya_hedef"] = hedef_k
+                if not tumunu_mu and not gecerli_secili:
+                    snack("Önce kopyalanacak denemeleri işaretle veya 'Tümünü Kopyala'ya bas ☑️")
+                    return
+                ok, msg, _ = denemeleri_baska_hesaba_kopyala_islem(
+                    hedef_k,
+                    indeksler=None if tumunu_mu else gecerli_secili,
+                    senkron=True,
+                    kaynak_kullanici=kaynak,
+                )
+                snack(msg)
+                if ok:
+                    ui["panel_secili_netler"] = set()
+                    yenile()
+            return f
+
+        deneme_satirlari = []
+        for idx, k in enumerate(kaynak_netler):
+            d_s = deneme_satiri_ayristir(k)
+            isaretli = idx in secili_set
+            deneme_satirlari.append(ft.Container(
+                padding=pad_sim(horizontal=8, vertical=5), border_radius=12,
+                bgcolor=opak(0.10, r["hdr"]) if isaretli else r["bg"],
+                border=kenar(1, r["hdr"] if isaretli else r["border"]),
+                content=ft.Row([
+                    ft.Checkbox(value=isaretli, on_change=tek_sec_degistir(idx), fill_color=r["hdr"], check_color=okunur_renk(r["hdr"])),
+                    ft.Text(f"{d_s['ad']} ({d_s['sinav']} • {d_s['tarih']})", size=12, weight=ft.FontWeight.W_700, color=r["txt"], expand=True),
+                    ft.Text(f"{d_s['toplam']:.2f} Net", size=12, weight=ft.FontWeight.W_800, color=r["hdr"]),
+                ], spacing=6),
+            ))
+
+        return kart(r, ft.Column([
+            bolum_basligi(r, ik("CONTENT_COPY"), "📋 Deneme Netlerini Farklı Hesaba Kopyala (Sadece Panel)"),
+            ft.Text("1) Denemeleri alınacak kaynak hesabı seç:", size=11, weight=ft.FontWeight.W_700, color=r["muted"]),
+            kaynak_cipleri,
+            ft.Text("2) Denemelerin kopyalanacağı hedef hesabı seç veya yaz:", size=11, weight=ft.FontWeight.W_700, color=r["muted"]),
+            *([hedef_cipleri] if diger_hedefler else []),
+            hedef_in,
+            *([
+                ft.Row([
+                    ft.Text(f"📋 {kaynak.upper()} Denemeleri ({len(kaynak_netler)} adet):", size=12, weight=ft.FontWeight.W_700, color=r["txt"], expand=True),
+                    buton(r, "☑️ Tümünü Seç/Kaldır", tumunu_sec_degistir, ikincil=True, yukseklik=32),
+                ]),
+                *deneme_satirlari,
+                ft.Row([
+                    buton(r, f"📋 Seçilenleri Kopyala ({len(gecerli_secili)})", panel_kopyala_calistir(False), genis=True, yukseklik=40),
+                    buton(r, f"📋 Tümünü Kopyala ({len(kaynak_netler)})", panel_kopyala_calistir(True), ikincil=True, genis=True, yukseklik=40),
+                ], spacing=8),
+            ] if kaynak_netler else [ft.Text(f"'{kaynak}' hesabında henüz kayıtlı deneme yok.", size=12, italic=True, color=r["muted"])]),
+        ], spacing=8))
+
     def ogrenciye_gonder(ogr, baslik, mesaj):
         """Öğrenciye hem gerçek telefon bildirimi hem uygulama içi sinyal gönderir."""
         def is_():
@@ -5037,6 +5770,7 @@ def main(page: ft.Page):
             aktif_icerik = [
                 ft.Text("🔴 Canlı: öğrenci çalışma ve seri verileri burada anlık görünür.", size=12, color=r["muted"]),
                 *([ft.Text(hata_yazi, color=KIRMIZI)] if hata_yazi else []),
+                panel_deneme_kopyalama_karti(r, users, isimler),
                 kap,
             ]
 
@@ -5948,6 +6682,35 @@ def main(page: ft.Page):
         )
 
         # --- TAM EKRAN 3D ODA STACK BİLEŞENİ (MOBİL VE MASAÜSTÜNDE HİÇBİR BUTON KESİLMEZ) ---
+        evden_gitti_mi = bool(st.get("evden_gitti")) or st.get("durum") == "GONE"
+        evden_gitti_katmani = []
+        if evden_gitti_mi:
+            evden_gitti_katmani.append(ft.Container(
+                left=0, right=0, top=0, bottom=0,
+                bgcolor=opak(0.88, "#1E1924"),
+                alignment=ORTA,
+                padding=22,
+                content=ft.Container(
+                    padding=20,
+                    border_radius=22,
+                    bgcolor=r["card_bg"],
+                    border=kenar(2, KIRMIZI),
+                    content=ft.Column([
+                        ft.Text("🐾🥣", size=42, text_align=ft.TextAlign.CENTER),
+                        ft.Text(
+                            f"😿 {st['isim']} Evden Gitti!",
+                            size=18, weight=ft.FontWeight.W_800, color=KIRMIZI, text_align=ft.TextAlign.CENTER,
+                        ),
+                        ft.Text(
+                            f"2 gün (48 saat) boyunca hiç yemek yemediği için {st['isim']} karnını doyurmak üzere evden ayrıldı.\n"
+                            f"Onu eve geri çağırmak için 🍴 Mutfak'tan hemen su, süt veya mama ikram et!",
+                            size=12, color=r["txt"], text_align=ft.TextAlign.CENTER,
+                        ),
+                        buton(r, "🍴 Mutfağa Git & Yemek Ver (Eve Çağır)", panel_ac("besle", 4), genis=True, yukseklik=44),
+                    ], spacing=10, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                ),
+            ))
+
         oda_sahnesi = ft.Container(
             width=oda_genislik,
             height=oda_yukseklik,
@@ -5970,6 +6733,7 @@ def main(page: ft.Page):
                 pencere_dokunma_alani,
                 kafa_dokunma_alani,
                 govde_dokunma_alani,
+                *evden_gitti_katmani,
                 ust_hud_satiri,
                 konusma_balonu,
                 orta_yan_satir,
@@ -6578,8 +7342,6 @@ def main(page: ft.Page):
             return False
         if getattr(eski, "_Control__uid", "ok") is None:
             return False
-        if ui.get("sekme") in (0, 1, 3) or (ui.get("sekme") == 5 and ui.get("alt") in ("evcil", "panel")):
-            return False
         if eski.scroll:
             eski.controls = yeni.controls
             return True
@@ -6597,7 +7359,7 @@ def main(page: ft.Page):
         if s_ == 1:
             a += (ui.get("calis_tab", 0), zm["durum"], zm["mod"], bool(ui.get("ilk_ders_paylasim_acik")))
         elif s_ == 2:
-            a += (ui["net_tab"],)
+            a += (ui["net_tab"], ui.get("duzenlenen_net_idx"))
         elif s_ == 3:
             a += (ui.get("evcil_panel"), ui["evcil_tab"], ui["acik_mektup"]["letter_id"] if isinstance(ui.get("acik_mektup"), dict) else None)
         elif s_ == 4:
@@ -6607,7 +7369,7 @@ def main(page: ft.Page):
         elif s_ == 5 and ui["alt"] == "eglence":
             a += (ui["eglence_tab"],)
         elif s_ == 5 and ui["alt"] == "panel":
-            a += (ui["panel_giris"], ui["panel_tab"], ui["panel_ogrenci"])
+            a += (ui["panel_giris"], ui["panel_tab"], ui["panel_ogrenci"], ui.get("panel_kopya_kaynak"))
         return a
 
     def icerik_guncelle(r):
@@ -6914,7 +7676,13 @@ def main(page: ft.Page):
         "krono_bitir_kaydet": krono_bitir_kaydet,
         "excel_olustur_islem": excel_olustur_islem,
         "deneme_sil_islem": deneme_sil_islem,
+        "deneme_duzenle_islem": deneme_duzenle_islem,
         "denemeleri_baska_hesaba_kopyala_islem": denemeleri_baska_hesaba_kopyala_islem,
+        "kronometre_su_bildirim_kontrol": kronometre_su_bildirim_kontrol,
+        "canli_calisma_odasi_cek": canli_calisma_odasi_cek,
+        "plan_gecmise_ekle": plan_gecmise_ekle,
+        "plan_onerileri_bul": plan_onerileri_bul,
+        "haftalik_programi_tamamen_sifirla_islem": haftalik_programi_tamamen_sifirla_islem,
         "gk": gk,
     }
 
